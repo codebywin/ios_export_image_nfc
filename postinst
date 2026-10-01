@@ -1,0 +1,8 @@
+#!/bin/sh
+# Refresh uicache cho Dopamine (rootless) và RootHide
+if [ -x "/var/jb/usr/bin/uicache" ]; then
+    /var/jb/usr/bin/uicache -p /var/jb/Applications/ExportImageNFC.app
+elif [ -x "/usr/bin/uicache" ]; then
+    /usr/bin/uicache -p /var/jb/Applications/ExportImageNFC.app
+fi
+exit 0

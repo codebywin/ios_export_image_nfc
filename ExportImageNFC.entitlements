@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Quyền đọc NFC Tag ISO 7816 -->
+    <key>com.apple.developer.nfc.readersession.formats</key>
+    <array>
+        <string>TAG</string>
+    </array>
+    
+    <!-- Các AID được phép đọc (A0000002471001 là ICAO eMRTD cho CCCD/Passport) -->
+    <key>com.apple.developer.nfc.readersession.iso7816.select-identifiers</key>
+    <array>
+        <string>A0000002471001</string>
+        <string>E80704007F00070302</string>
+        <string>A000000167455349474E</string>
+    </array>
+
+    <!-- Quyền chạy ngầm / bypass sandbox trên Jailbreak nếu cần -->
+    <key>platform-application</key>
+    <true/>
+    <key>com.apple.private.security.no-container</key>
+    <true/>
+</dict>
+</plist>

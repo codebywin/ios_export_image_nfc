@@ -1,0 +1,10 @@
+Package: com.thang.exportimagenfc
+Name: CCCD NFC Export Image
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: Quét chip thẻ CCCD qua NFC và xuất ảnh chân dung ra file JPG (Dopamine / RootHide)
+Maintainer: Thang <dev@example.com>
+Author: Thang
+Section: Utilities
+Priority: optional
+Depends: firmware (>= 15.0)
