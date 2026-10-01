@@ -25,7 +25,7 @@
 }
 
 - (void)startScanning {
-    if (![NFCTagReaderSession isReadingAvailable]) {
+    if (![NFCReaderSession readingAvailable]) {
         if ([self.delegate respondsToSelector:@selector(cccdReaderDidFailWithError:)]) {
             [self.delegate cccdReaderDidFailWithError:@"Thiết bị không hỗ trợ NFC hoặc chưa bật NFC."];
         }
@@ -57,7 +57,7 @@
 }
 
 - (void)tagReaderSession:(NFCTagReaderSession *)session didInvalidateWithError:(NSError *)error {
-    if (error.code != NFCReaderErrorReaderSessionInvalidationErrorUserCanceled) {
+    if (error.code != NFCReaderSessionInvalidationErrorUserCanceled) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if ([self.delegate respondsToSelector:@selector(cccdReaderDidFailWithError:)]) {
                 [self.delegate cccdReaderDidFailWithError:error.localizedDescription];
@@ -99,12 +99,12 @@
     uint8_t aidBytes[] = {0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
     NSData *aidData = [NSData dataWithBytes:aidBytes length:sizeof(aidBytes)];
 
-    NFCISO7816APDU *selectAID = [[NFCISO7816APDU alloc] initWithInstructionClass:0x00
-                                                                instructionCode:0xA4
-                                                                    p1Parameter:0x04
-                                                                    p2Parameter:0x0C
-                                                                           data:aidData
-                                                    expectedResponseBodyLength:-1];
+    NFCISO7816APDU *selectAID = [BACSession createAPDUWithCla:0x00
+                                                          ins:0xA4
+                                                           p1:0x04
+                                                           p2:0x0C
+                                                         data:aidData
+                                                           le:-1];
 
     [tag sendCommandAPDU:selectAID completionHandler:^(NSData * _Nonnull responseData, uint8_t sw1, uint8_t sw2, NSError * _Nullable error) {
         if (sw1 != 0x90 || sw2 != 0x00) {
@@ -137,12 +137,12 @@
     }
 
     // GET CHALLENGE: 00 84 00 00 08
-    NFCISO7816APDU *getChallenge = [[NFCISO7816APDU alloc] initWithInstructionClass:0x00
-                                                                   instructionCode:0x84
-                                                                       p1Parameter:0x00
-                                                                       p2Parameter:0x00
-                                                                              data:[NSData data]
-                                                       expectedResponseBodyLength:8];
+    NFCISO7816APDU *getChallenge = [BACSession createAPDUWithCla:0x00
+                                                             ins:0x84
+                                                              p1:0x00
+                                                              p2:0x00
+                                                            data:nil
+                                                              le:8];
 
     [tag sendCommandAPDU:getChallenge completionHandler:^(NSData * _Nonnull respData, uint8_t sw1, uint8_t sw2, NSError * _Nullable error) {
         if (sw1 != 0x90 || sw2 != 0x00 || respData.length != 8) {
@@ -155,8 +155,8 @@
         // Sinh ngẫu nhiên RND.IFD (8 bytes) và k_ifd (16 bytes)
         uint8_t rndIFDBytes[8];
         uint8_t kIFDBytes[16];
-        SecRandomCopyBytes(kSecRandomDefault, 8, rndIFDBytes);
-        SecRandomCopyBytes(kSecRandomDefault, 16, kIFDBytes);
+        (void)SecRandomCopyBytes(kSecRandomDefault, 8, rndIFDBytes);
+        (void)SecRandomCopyBytes(kSecRandomDefault, 16, kIFDBytes);
 
         NSData *rndIFD = [NSData dataWithBytes:rndIFDBytes length:8];
         NSData *kIFD = [NSData dataWithBytes:kIFDBytes length:16];
@@ -179,12 +179,12 @@
         [authData appendData:eIFD];
         [authData appendData:mIFD];
 
-        NFCISO7816APDU *extAuth = [[NFCISO7816APDU alloc] initWithInstructionClass:0x00
-                                                                   instructionCode:0x82
-                                                                       p1Parameter:0x00
-                                                                       p2Parameter:0x00
-                                                                              data:authData
-                                                       expectedResponseBodyLength:0x28];
+        NFCISO7816APDU *extAuth = [BACSession createAPDUWithCla:0x00
+                                                            ins:0x82
+                                                             p1:0x00
+                                                             p2:0x00
+                                                           data:authData
+                                                             le:0x28];
 
         [tag sendCommandAPDU:extAuth completionHandler:^(NSData * _Nonnull authResp, uint8_t aSw1, uint8_t aSw2, NSError * _Nullable aErr) {
             if (aSw1 != 0x90 || aSw2 != 0x00 || authResp.length < 40) {

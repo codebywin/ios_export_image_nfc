@@ -7,6 +7,36 @@
 
 @implementation BACSession
 
++ (NFCISO7816APDU *)createAPDUWithCla:(uint8_t)cla
+                                  ins:(uint8_t)ins
+                                   p1:(uint8_t)p1
+                                   p2:(uint8_t)p2
+                                 data:(NSData *)data
+                                   le:(NSInteger)le {
+    NSMutableData *apdu = [NSMutableData data];
+    uint8_t header[] = {cla, ins, p1, p2};
+    [apdu appendBytes:header length:4];
+
+    if (data && data.length > 0) {
+        if (data.length <= 255) {
+            uint8_t lc = (uint8_t)data.length;
+            [apdu appendBytes:&lc length:1];
+            [apdu appendData:data];
+        } else {
+            uint8_t lcExtended[] = {0x00, (uint8_t)(data.length >> 8), (uint8_t)(data.length & 0xFF)};
+            [apdu appendBytes:lcExtended length:3];
+            [apdu appendData:data];
+        }
+    }
+
+    if (le >= 0) {
+        uint8_t leByte = (le == 256 || le == 0) ? 0x00 : (uint8_t)le;
+        [apdu appendBytes:&leByte length:1];
+    }
+
+    return [[NFCISO7816APDU alloc] initWithData:apdu];
+}
+
 - (instancetype)initWithKsEnc:(NSData *)ksEnc ksMac:(NSData *)ksMac initialSSC:(uint64_t)initialSSC {
     self = [super init];
     if (self) {
@@ -95,12 +125,7 @@
     [protectedData appendData:do97];
     [protectedData appendData:do8E];
 
-    return [[NFCISO7816APDU alloc] initWithInstructionClass:0x0C
-                                           instructionCode:ins
-                                               p1Parameter:p1
-                                               p2Parameter:p2
-                                                      data:protectedData
-                               expectedResponseBodyLength:0];
+    return [BACSession createAPDUWithCla:0x0C ins:ins p1:p1 p2:p2 data:protectedData le:0];
 }
 
 // MARK: - Unwrap Response
