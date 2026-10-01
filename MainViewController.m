@@ -18,6 +18,7 @@
 @property (nonatomic, strong) UILabel *photoPlaceholderLabel;
 
 @property (nonatomic, strong) UISegmentedControl *segmentAuth;
+@property (nonatomic, strong) UIStackView *authInputStackView;
 
 // 1. Camera
 @property (nonatomic, strong) UIView *cameraContainer;
@@ -174,7 +175,6 @@
     // 1. Camera View
     self.cameraContainer = [[UIView alloc] init];
     self.cameraContainer.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.contentView addSubview:self.cameraContainer];
 
     self.scanCameraButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.scanCameraButton.translatesAutoresizingMaskIntoConstraints = NO;
@@ -196,7 +196,6 @@
     // 2. CAN View
     self.canContainer = [[UIView alloc] init];
     self.canContainer.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.contentView addSubview:self.canContainer];
 
     self.canTextField = [[UITextField alloc] init];
     self.canTextField.translatesAutoresizingMaskIntoConstraints = NO;
@@ -211,22 +210,28 @@
     // 3. Manual MRZ View
     self.mrzContainer = [[UIView alloc] init];
     self.mrzContainer.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.contentView addSubview:self.mrzContainer];
+
+    UILabel *mrzHelpLabel = [[UILabel alloc] init];
+    mrzHelpLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    mrzHelpLabel.text = @"Nhập thông tin mặt sau để xác thực chip NFC:";
+    mrzHelpLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    mrzHelpLabel.textColor = [UIColor secondaryLabelColor];
+    [self.mrzContainer addSubview:mrzHelpLabel];
 
     self.docNumberTextField = [[UITextField alloc] init];
-    self.docNumberTextField.placeholder = @"Số CCCD (12 số)";
+    self.docNumberTextField.placeholder = @"Số CCCD (12 chữ số)";
     self.docNumberTextField.borderStyle = UITextBorderStyleRoundedRect;
     self.docNumberTextField.keyboardType = UIKeyboardTypeNumberPad;
     [self addDoneButtonToTextField:self.docNumberTextField];
 
     self.dobTextField = [[UITextField alloc] init];
-    self.dobTextField.placeholder = @"Ngày sinh (YYMMDD ví dụ: 980512)";
+    self.dobTextField.placeholder = @"Ngày sinh YYMMDD (VD: 15/08/1995 -> 950815)";
     self.dobTextField.borderStyle = UITextBorderStyleRoundedRect;
     self.dobTextField.keyboardType = UIKeyboardTypeNumberPad;
     [self addDoneButtonToTextField:self.dobTextField];
 
     self.doeTextField = [[UITextField alloc] init];
-    self.doeTextField.placeholder = @"Ngày hết hạn (YYMMDD ví dụ: 380512)";
+    self.doeTextField.placeholder = @"Ngày hết hạn YYMMDD (VD: 15/08/2035 -> 350815)";
     self.doeTextField.borderStyle = UITextBorderStyleRoundedRect;
     self.doeTextField.keyboardType = UIKeyboardTypeNumberPad;
     [self addDoneButtonToTextField:self.doeTextField];
@@ -234,8 +239,17 @@
     UIStackView *mrzStack = [[UIStackView alloc] initWithArrangedSubviews:@[self.docNumberTextField, self.dobTextField, self.doeTextField]];
     mrzStack.translatesAutoresizingMaskIntoConstraints = NO;
     mrzStack.axis = UILayoutConstraintAxisVertical;
-    mrzStack.spacing = 8.0;
+    mrzStack.spacing = 10.0;
     [self.mrzContainer addSubview:mrzStack];
+
+    // Auth Input Stack View (bọc cả 3 container)
+    self.authInputStackView = [[UIStackView alloc] initWithArrangedSubviews:@[self.cameraContainer, self.canContainer, self.mrzContainer]];
+    self.authInputStackView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.authInputStackView.axis = UILayoutConstraintAxisVertical;
+    self.authInputStackView.alignment = UIStackViewAlignmentFill;
+    self.authInputStackView.distribution = UIStackViewDistributionFill;
+    self.authInputStackView.spacing = 0;
+    [self.contentView addSubview:self.authInputStackView];
 
     // NFC Button
     self.scanNFCButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -328,40 +342,42 @@
         [self.segmentAuth.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:20],
         [self.segmentAuth.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-20],
 
-        // Camera
-        [self.cameraContainer.topAnchor constraintEqualToAnchor:self.segmentAuth.bottomAnchor constant:14],
-        [self.cameraContainer.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:20],
-        [self.cameraContainer.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-20],
+        // Auth Input Stack View (Chứa 3 container)
+        [self.authInputStackView.topAnchor constraintEqualToAnchor:self.segmentAuth.bottomAnchor constant:14],
+        [self.authInputStackView.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:20],
+        [self.authInputStackView.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-20],
+
+        // 1. Camera subviews
         [self.scanCameraButton.topAnchor constraintEqualToAnchor:self.cameraContainer.topAnchor],
         [self.scanCameraButton.leadingAnchor constraintEqualToAnchor:self.cameraContainer.leadingAnchor],
         [self.scanCameraButton.trailingAnchor constraintEqualToAnchor:self.cameraContainer.trailingAnchor],
-        [self.scanCameraButton.heightAnchor constraintEqualToConstant:44],
+        [self.scanCameraButton.heightAnchor constraintEqualToConstant:46],
         [self.scannedInfoLabel.topAnchor constraintEqualToAnchor:self.scanCameraButton.bottomAnchor constant:8],
         [self.scannedInfoLabel.leadingAnchor constraintEqualToAnchor:self.cameraContainer.leadingAnchor],
         [self.scannedInfoLabel.trailingAnchor constraintEqualToAnchor:self.cameraContainer.trailingAnchor],
-        [self.scannedInfoLabel.bottomAnchor constraintEqualToAnchor:self.cameraContainer.bottomAnchor],
+        [self.scannedInfoLabel.bottomAnchor constraintEqualToAnchor:self.cameraContainer.bottomAnchor constant:-4],
 
-        // CAN
-        [self.canContainer.topAnchor constraintEqualToAnchor:self.segmentAuth.bottomAnchor constant:14],
-        [self.canContainer.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:20],
-        [self.canContainer.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-20],
+        // 2. CAN subviews
         [self.canTextField.topAnchor constraintEqualToAnchor:self.canContainer.topAnchor],
         [self.canTextField.leadingAnchor constraintEqualToAnchor:self.canContainer.leadingAnchor],
         [self.canTextField.trailingAnchor constraintEqualToAnchor:self.canContainer.trailingAnchor],
-        [self.canTextField.bottomAnchor constraintEqualToAnchor:self.canContainer.bottomAnchor],
+        [self.canTextField.bottomAnchor constraintEqualToAnchor:self.canContainer.bottomAnchor constant:-4],
         [self.canTextField.heightAnchor constraintEqualToConstant:44],
 
-        // MRZ
-        [self.mrzContainer.topAnchor constraintEqualToAnchor:self.segmentAuth.bottomAnchor constant:14],
-        [self.mrzContainer.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:20],
-        [self.mrzContainer.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-20],
-        [mrzStack.topAnchor constraintEqualToAnchor:self.mrzContainer.topAnchor],
+        // 3. MRZ subviews
+        [mrzHelpLabel.topAnchor constraintEqualToAnchor:self.mrzContainer.topAnchor],
+        [mrzHelpLabel.leadingAnchor constraintEqualToAnchor:self.mrzContainer.leadingAnchor],
+        [mrzHelpLabel.trailingAnchor constraintEqualToAnchor:self.mrzContainer.trailingAnchor],
+        [mrzStack.topAnchor constraintEqualToAnchor:mrzHelpLabel.bottomAnchor constant:8],
         [mrzStack.leadingAnchor constraintEqualToAnchor:self.mrzContainer.leadingAnchor],
         [mrzStack.trailingAnchor constraintEqualToAnchor:self.mrzContainer.trailingAnchor],
-        [mrzStack.bottomAnchor constraintEqualToAnchor:self.mrzContainer.bottomAnchor],
+        [mrzStack.bottomAnchor constraintEqualToAnchor:self.mrzContainer.bottomAnchor constant:-4],
+        [self.docNumberTextField.heightAnchor constraintEqualToConstant:44],
+        [self.dobTextField.heightAnchor constraintEqualToConstant:44],
+        [self.doeTextField.heightAnchor constraintEqualToConstant:44],
 
-        // NFC Button
-        [self.scanNFCButton.topAnchor constraintEqualToAnchor:self.cameraContainer.bottomAnchor constant:24],
+        // NFC Button (luôn nằm dưới đáy của authInputStackView)
+        [self.scanNFCButton.topAnchor constraintEqualToAnchor:self.authInputStackView.bottomAnchor constant:20],
         [self.scanNFCButton.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:20],
         [self.scanNFCButton.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-20],
         [self.scanNFCButton.heightAnchor constraintEqualToConstant:50],
@@ -398,6 +414,8 @@
     self.cameraContainer.hidden = (self.segmentAuth.selectedSegmentIndex != 0);
     self.canContainer.hidden = (self.segmentAuth.selectedSegmentIndex != 1);
     self.mrzContainer.hidden = (self.segmentAuth.selectedSegmentIndex != 2);
+    [self.view setNeedsLayout];
+    [self.view layoutIfNeeded];
 }
 
 - (void)handleOpenMRZCamera {
@@ -421,6 +439,23 @@
     self.doeTextField.text = expiry;
 
     self.statusLabel.text = @"Đã có thông tin mặt sau! Nhấn 'Bắt Đầu Quét NFC CCCD' và áp lưng iPhone vào chip.";
+}
+
+- (void)mrzScannerDidRequestManualFillWithDoc:(NSString *)doc birth:(NSString *)birth expiry:(NSString *)expiry {
+    if (doc.length > 0) self.docNumberTextField.text = doc;
+    if (birth.length > 0) self.dobTextField.text = birth;
+    if (expiry.length > 0) self.doeTextField.text = expiry;
+
+    self.segmentAuth.selectedSegmentIndex = 2; // Chuyển sang Tab Nhập Tay MRZ
+    [self updateAuthMode];
+
+    if (doc.length == 0) {
+        [self.docNumberTextField becomeFirstResponder];
+    } else if (birth.length == 0) {
+        [self.dobTextField becomeFirstResponder];
+    } else if (expiry.length == 0) {
+        [self.doeTextField becomeFirstResponder];
+    }
 }
 
 // MARK: - Handle NFC Scan
@@ -578,3 +613,4 @@
 }
 
 @end
+
