@@ -27,7 +27,7 @@
     UIImage *image = [UIImage imageWithData:imageData];
     if (image) {
         CGImageRef cg = image.CGImage;
-        NSLog(@"[DG2Parser] Decoded: %.0f x %.0f px, scale=%.1f",
+        NSLog(@"[DG2Parser] Decoded: %zux%zu px, scale=%.1f",
               CGImageGetWidth(cg), CGImageGetHeight(cg), image.scale);
         return image;
     }

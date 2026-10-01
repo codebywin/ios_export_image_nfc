@@ -562,7 +562,7 @@
         self.photoPlaceholderLabel.hidden = YES;
 
         CGImageRef cg = image.CGImage;
-        self.statusLabel.text = [NSString stringWithFormat:@"✅ Đọc ảnh chân dung thành công! Ảnh: %.0fx%.0f px, DG2: %lu KB.",
+        self.statusLabel.text = [NSString stringWithFormat:@"✅ Đọc ảnh chân dung thành công! Ảnh: %zux%zu px, DG2: %lu KB.",
                                  CGImageGetWidth(cg), CGImageGetHeight(cg), (unsigned long)(rawData.length / 1024)];
         self.statusLabel.textColor = [UIColor systemGreenColor];
 
