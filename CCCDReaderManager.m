@@ -13,7 +13,7 @@
 
 @implementation CCCDReaderManager
 
-// Ghi log ra file trong Documents để đọc được qua SSH (thư mục app trên jailbreak)
+// Ghi log ra file để đọc được qua SSH (thử nhiều path vì sandbox jailbreak khác nhau)
 + (void)log:(NSString *)format, ... {
     va_list args;
     va_start(args, format);
@@ -22,24 +22,33 @@
 
     NSLog(@"[CCCD] %@", msg);
 
-    static NSString *logPath = nil;
+    static NSArray<NSString *> *logPaths = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        logPath = @"/tmp/cccd_debug.log";
+        NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+        NSString *caches = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
+        logPaths = @[
+            @"/tmp/cccd_debug.log",
+            [docs stringByAppendingPathComponent:@"cccd_debug.log"],
+            [caches stringByAppendingPathComponent:@"cccd_debug.log"],
+            @"/var/mobile/Library/Caches/cccd_debug.log",
+        ];
     });
 
     dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_UTILITY, 0);
     dispatch_async(queue, ^{
         NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], msg];
         NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
-        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:logPath];
-        if (!fh) {
-            [[NSFileManager defaultManager] createFileAtPath:logPath contents:data attributes:nil];
-            return;
+        for (NSString *path in logPaths) {
+            NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+            if (!fh) {
+                [[NSFileManager defaultManager] createFileAtPath:path contents:data attributes:nil];
+            } else {
+                [fh seekToEndOfFile];
+                [fh writeData:data];
+                [fh closeFile];
+            }
         }
-        [fh seekToEndOfFile];
-        [fh writeData:data];
-        [fh closeFile];
     });
 }
 
@@ -69,6 +78,7 @@
 }
 
 - (void)startScanning {
+    [CCCDReaderManager log:@"startScanning called, NFC readingAvailable=%d", [NFCReaderSession readingAvailable]];
     if (![NFCReaderSession readingAvailable]) {
         if ([self.delegate respondsToSelector:@selector(cccdReaderDidFailWithError:)]) {
             [self.delegate cccdReaderDidFailWithError:@"Thiết bị không hỗ trợ NFC hoặc chưa bật NFC."];
@@ -132,6 +142,7 @@
             }
         });
 
+        [CCCDReaderManager log:@"Tag connected, starting BAC process"];
         [self processCCCDWithTag:iso7816Tag session:session];
     }];
 }
@@ -164,6 +175,7 @@
         [self tryBACWithCandidateIndex:0 tag:tag session:session completion:^(BOOL success) {
             if (success) {
                 session.alertMessage = @"Đang đọc ảnh chân dung (DG2)... Giữ yên thẻ.";
+                [CCCDReaderManager log:@"BAC OK, now reading DG2"];
                 [self readDG2WithTag:tag session:session];
             } else {
                 NSString *err = [NSString stringWithFormat:@"Xác thực chip thất bại (SW=%02X%02X). Vui lòng kiểm tra lại Số CCCD/Ngày sinh.", self.lastErrorSW1, self.lastErrorSW2];
