@@ -561,7 +561,9 @@
         self.portraitImageView.image = image;
         self.photoPlaceholderLabel.hidden = YES;
 
-        self.statusLabel.text = [NSString stringWithFormat:@"✅ Đọc ảnh chân dung thành công! Kích thước: %lu KB.", (unsigned long)(rawData.length / 1024)];
+        CGImageRef cg = image.CGImage;
+        self.statusLabel.text = [NSString stringWithFormat:@"✅ Đọc ảnh chân dung thành công! Ảnh: %.0fx%.0f px, DG2: %lu KB.",
+                                 CGImageGetWidth(cg), CGImageGetHeight(cg), (unsigned long)(rawData.length / 1024)];
         self.statusLabel.textColor = [UIColor systemGreenColor];
 
         self.saveToPhotosButton.enabled = YES;
