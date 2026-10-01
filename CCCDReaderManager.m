@@ -13,6 +13,36 @@
 
 @implementation CCCDReaderManager
 
+// Ghi log ra file trong Documents để đọc được qua SSH (thư mục app trên jailbreak)
++ (void)log:(NSString *)format, ... {
+    va_list args;
+    va_start(args, format);
+    NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+
+    NSLog(@"[CCCD] %@", msg);
+
+    static NSString *logPath = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        logPath = @"/tmp/cccd_debug.log";
+    });
+
+    dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_UTILITY, 0);
+    dispatch_async(queue, ^{
+        NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], msg];
+        NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:logPath];
+        if (!fh) {
+            [[NSFileManager defaultManager] createFileAtPath:logPath contents:data attributes:nil];
+            return;
+        }
+        [fh seekToEndOfFile];
+        [fh writeData:data];
+        [fh closeFile];
+    });
+}
+
 - (instancetype)initWithCandidateSeeds:(NSArray<NSData *> *)candidateSeeds {
     self = [super init];
     if (self) {
@@ -178,7 +208,7 @@
             if (sw1 != 0x90 || sw2 != 0x00 || respData.length != 8) {
                 self.lastErrorSW1 = sw1;
                 self.lastErrorSW2 = sw2;
-                NSLog(@"[BAC] GET CHALLENGE thất bại: sw1=%02X sw2=%02X", sw1, sw2);
+                [CCCDReaderManager log:@"GET CHALLENGE failed for candidate #%lu: sw1=%02X sw2=%02X, len=%lu", (unsigned long)index + 1, sw1, sw2, (unsigned long)respData.length];
                 [self tryBACWithCandidateIndex:index + 1 tag:tag session:session completion:completion];
                 return;
             }
@@ -257,7 +287,7 @@
                                     initialSSC = CFSwapInt64BigToHost(initialSSC);
 
                                     self.bacSession = [[BACSession alloc] initWithKsEnc:ksEnc ksMac:ksMac initialSSC:initialSSC];
-                                    NSLog(@"[BAC] Xác thực chip thành công ở ứng viên số %lu!", (unsigned long)index + 1);
+                                    [CCCDReaderManager log:@"BAC SUCCESS at candidate #%lu, initialSSC=0x%llX", (unsigned long)index + 1, initialSSC];
                                     completion(YES);
                                     return;
                                 }
@@ -268,7 +298,7 @@
 
                 self.lastErrorSW1 = aSw1;
                 self.lastErrorSW2 = aSw2;
-                NSLog(@"[BAC] Ứng viên %lu thất bại (SW: %02X %02X). Đang thử phương án tiếp theo...", (unsigned long)index + 1, aSw1, aSw2);
+                [CCCDReaderManager log:@"BAC candidate #%lu FAILED (SW: %02X %02X). Trying next...", (unsigned long)index + 1, aSw1, aSw2];
                 [self tryBACWithCandidateIndex:index + 1 tag:tag session:session completion:completion];
             }];
         }];
@@ -307,6 +337,10 @@
                                                                  le:-1];
 
     [tag sendCommandAPDU:selectDG2 completionHandler:^(NSData * _Nonnull respData, uint8_t sw1, uint8_t sw2, NSError * _Nullable error) {
+        [CCCDReaderManager log:@"SELECT DG2 (01 02) - SW=%02X%02X, response len=%lu", sw1, sw2, (unsigned long)respData.length];
+        if (sw1 != 0x90 || sw2 != 0x00) {
+            [CCCDReaderManager log:@"WARNING: SELECT DG2 failed with SW=%02X%02X", sw1, sw2];
+        }
         // 2. READ BINARY 4 bytes đầu để parse độ dài DG2
         NFCISO7816APDU *readHdr = [self.bacSession wrapCommandWithCla:0x00
                                                                   ins:0xB0
@@ -316,9 +350,15 @@
                                                                    le:0x04];
 
         [tag sendCommandAPDU:readHdr completionHandler:^(NSData * _Nonnull hdrResp, uint8_t hSw1, uint8_t hSw2, NSError * _Nullable hErr) {
+            [CCCDReaderManager log:@"READ BINARY header response - SW=%02X%02X, encrypted length=%lu, hex=%@", hSw1, hSw2, (unsigned long)hdrResp.length, hdrResp];
+            
             uint8_t outSw1 = 0, outSw2 = 0;
             NSData *plainHdr = [self.bacSession unwrapResponseData:hdrResp sw1:&outSw1 sw2:&outSw2];
+            
+            [CCCDReaderManager log:@"After unwrap - SW=%02X%02X, plaintext length=%lu, hex=%@", outSw1, outSw2, (unsigned long)(plainHdr ? plainHdr.length : 0), plainHdr];
+            
             if (!plainHdr || plainHdr.length < 4) {
+                [CCCDReaderManager log:@"ERROR: Cannot read DG2 header. plainHdr=%@, len=%lu, SW=%02X%02X", plainHdr, (unsigned long)(plainHdr ? plainHdr.length : 0), outSw1, outSw2];
                 [session invalidateSessionWithErrorMessage:@"Không thể đọc header kích thước DG2."];
                 return;
             }
@@ -402,7 +442,7 @@
     }
     
     // Case 3: Header format không hỗ trợ - trả về 0 để caller xử lý lỗi
-    NSLog(@"[DG2] Không thể parse độ dài từ header DG2. Hex: %@", header);
+    [CCCDReaderManager log:@"Cannot parse DG2 length from header. Header hex: %@", header];
     return 0;
 }
 
