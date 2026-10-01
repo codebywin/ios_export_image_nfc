@@ -13,23 +13,22 @@
 
     NSData *imageData = [dg2Data subdataWithRange:NSMakeRange(offset, dg2Data.length - offset)];
 
+    const uint8_t *h = (const uint8_t *)imageData.bytes;
     NSLog(@"[DG2Parser] Image data offset=%ld, length=%lu bytes, header: %02X %02X %02X %02X",
-          (long)offset, (unsigned long)imageData.length,
-          ((const uint8_t *)imageData.bytes)[0],
-          ((const uint8_t *)imageData.bytes)[1],
-          ((const uint8_t *)imageData.bytes)[2],
-          ((const uint8_t *)imageData.bytes)[3]);
+          (long)offset, (unsigned long)imageData.length, h[0], h[1], h[2], h[3]);
+
+    // Dump ảnh thô để phân tích định dạng/kích thước thực tế
+    [imageData writeToFile:@"/var/mobile/Library/Caches/dg2_face_raw.bin" atomically:YES];
+    [dg2Data writeToFile:@"/var/mobile/Library/Caches/dg2_full_tlv.bin" atomically:YES];
+    NSLog(@"[DG2Parser] Dumped raw image (%lu bytes) and full DG2 (%lu bytes) to Caches",
+          (unsigned long)imageData.length, (unsigned long)dg2Data.length);
 
     // Khởi tạo UIImage từ dữ liệu ảnh (iOS hỗ trợ cả JPEG và JPEG 2000 native)
     UIImage *image = [UIImage imageWithData:imageData];
     if (image) {
         CGImageRef cg = image.CGImage;
-        NSLog(@"[DG2Parser] Decoded: %.0f x %.0f px, scale=%.1f, JPEG2000=%@",
-              CGImageGetWidth(cg), CGImageGetHeight(cg), image.scale,
-              (offset >= 0 && imageData.length > 4 &&
-               ((const uint8_t *)imageData.bytes)[0] == 0xFF &&
-               (((const uint8_t *)imageData.bytes)[1] == 0x4F ||
-                ((const uint8_t *)imageData.bytes)[1] == 0xD8)) ? @"YES" : @"NO");
+        NSLog(@"[DG2Parser] Decoded: %.0f x %.0f px, scale=%.1f",
+              CGImageGetWidth(cg), CGImageGetHeight(cg), image.scale);
         return image;
     }
 
