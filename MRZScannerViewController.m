@@ -90,20 +90,20 @@
     [self.view addSubview:self.closeButton];
 
     [NSLayoutConstraint activateConstraints:@[
-        [self.overlayGuideView.centerXAnchor.constraintEqualToAnchor:self.view.centerXAnchor],
-        [self.overlayGuideView.centerYAnchor.constraintEqualToAnchor:self.view.centerYAnchor],
-        [self.overlayGuideView.widthAnchor.constraintEqualToAnchor:self.view.widthAnchor multiplier:0.88],
-        [self.overlayGuideView.heightAnchor.constraintEqualToConstant:160],
+        [self.overlayGuideView.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [self.overlayGuideView.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+        [self.overlayGuideView.widthAnchor constraintEqualToAnchor:self.view.widthAnchor multiplier:0.88],
+        [self.overlayGuideView.heightAnchor constraintEqualToConstant:160],
 
-        [self.instructionLabel.topAnchor.constraintEqualToAnchor:self.overlayGuideView.bottomAnchor constant:20],
-        [self.instructionLabel.leadingAnchor.constraintEqualToAnchor:self.view.leadingAnchor constant:30],
-        [self.instructionLabel.trailingAnchor.constraintEqualToAnchor:self.view.trailingAnchor constant:-30],
-        [self.instructionLabel.heightAnchor.constraintGreaterThanOrEqualToConstant:44],
+        [self.instructionLabel.topAnchor constraintEqualToAnchor:self.overlayGuideView.bottomAnchor constant:20],
+        [self.instructionLabel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:30],
+        [self.instructionLabel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-30],
+        [self.instructionLabel.heightAnchor constraintGreaterThanOrEqualToConstant:44],
 
-        [self.closeButton.topAnchor.constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:16],
-        [self.closeButton.trailingAnchor.constraintEqualToAnchor:self.view.trailingAnchor constant:-20],
-        [self.closeButton.widthAnchor.constraintEqualToConstant:80],
-        [self.closeButton.heightAnchor.constraintEqualToConstant:36]
+        [self.closeButton.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:16],
+        [self.closeButton.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-20],
+        [self.closeButton.widthAnchor constraintEqualToConstant:80],
+        [self.closeButton.heightAnchor constraintEqualToConstant:36]
     ]];
 }
 
