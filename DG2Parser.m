@@ -2,43 +2,87 @@
 
 @implementation DG2Parser
 
++ (void)log:(NSString *)format, ... {
+    va_list args;
+    va_start(args, format);
+    NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+
+    static NSArray<NSString *> *logPaths = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+        logPaths = @[
+            @"/var/mobile/Library/Caches/cccd_debug.log",
+            [docs stringByAppendingPathComponent:@"cccd_debug.log"],
+        ];
+    });
+
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], msg];
+        NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+        for (NSString *path in logPaths) {
+            NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+            if (!fh) {
+                [[NSFileManager defaultManager] createFileAtPath:path contents:data attributes:nil];
+            } else {
+                [fh seekToEndOfFile];
+                [fh writeData:data];
+                [fh closeFile];
+            }
+        }
+    });
+}
+
 + (UIImage *)extractImageFromDG2Data:(NSData *)dg2Data {
+    [DG2Parser log:@"extractImageFromDG2Data called, dg2 length=%lu", (unsigned long)(dg2Data ? dg2Data.length : 0)];
     if (!dg2Data || dg2Data.length < 4) return nil;
 
     NSInteger offset = [self findImageOffsetInData:dg2Data];
     if (offset < 0) {
-        NSLog(@"[DG2Parser] Không tìm thấy header JPEG / JPEG2000 trong DG2.");
+        [DG2Parser log:@"No JPEG/JPEG2000 header found in DG2"];
         return nil;
     }
 
     NSData *imageData = [dg2Data subdataWithRange:NSMakeRange(offset, dg2Data.length - offset)];
 
     const uint8_t *h = (const uint8_t *)imageData.bytes;
-    NSLog(@"[DG2Parser] Image data offset=%ld, length=%lu bytes, header: %02X %02X %02X %02X",
-          (long)offset, (unsigned long)imageData.length, h[0], h[1], h[2], h[3]);
+    [DG2Parser log:@"Image offset=%ld, image length=%lu bytes, header: %02X %02X %02X %02X %02X %02X %02X %02X",
+          (long)offset, (unsigned long)imageData.length, h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]];
 
-    // Dump ảnh thô để phân tích định dạng/kích thước thực tế
-    [imageData writeToFile:@"/var/mobile/Library/Caches/dg2_face_raw.bin" atomically:YES];
-    [dg2Data writeToFile:@"/var/mobile/Library/Caches/dg2_full_tlv.bin" atomically:YES];
-    NSLog(@"[DG2Parser] Dumped raw image (%lu bytes) and full DG2 (%lu bytes) to Caches",
-          (unsigned long)imageData.length, (unsigned long)dg2Data.length);
+    // Dump ảnh thô ra nhiều vị trí để phân tích
+    NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    NSArray<NSString *> *dumpPaths = @[
+        @"/var/mobile/Library/Caches/dg2_face_raw.bin",
+        [docs stringByAppendingPathComponent:@"dg2_face_raw.bin"],
+    ];
+    for (NSString *p in dumpPaths) {
+        BOOL ok = [imageData writeToFile:p atomically:YES];
+        [DG2Parser log:@"Dump to %@: %@", p, ok ? @"OK" : @"FAILED"];
+    }
 
     // Khởi tạo UIImage từ dữ liệu ảnh (iOS hỗ trợ cả JPEG và JPEG 2000 native)
     UIImage *image = [UIImage imageWithData:imageData];
     if (image) {
         CGImageRef cg = image.CGImage;
-        NSLog(@"[DG2Parser] Decoded: %zux%zu px, scale=%.1f",
-              CGImageGetWidth(cg), CGImageGetHeight(cg), image.scale);
+        [DG2Parser log:@"Decoded OK: %zux%zu px, scale=%.1f", CGImageGetWidth(cg), CGImageGetHeight(cg), image.scale];
         return image;
     }
+    [DG2Parser log:@"UIImage imageWithData returned nil, trying trim"];
 
     // Cắt đuôi theo EOF JPEG: FF D9 nếu có metadata thừa ở cuối
     NSData *trimmed = [self trimJPEGData:imageData];
     if (trimmed) {
         image = [UIImage imageWithData:trimmed];
-        if (image) return image;
+        if (image) {
+            CGImageRef cg = image.CGImage;
+            [DG2Parser log:@"Decoded after trim: %zux%zu px", CGImageGetWidth(cg), CGImageGetHeight(cg)];
+            return image;
+        }
+        [DG2Parser log:@"Trim data also failed to decode"];
     }
 
+    [DG2Parser log:@"All decode attempts failed"];
     return nil;
 }
 
