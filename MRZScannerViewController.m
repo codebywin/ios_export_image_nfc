@@ -53,7 +53,7 @@
     self.previewLayer.videoGravity = AVLayerVideoGravityResizeAspectFill;
     [self.view.layer addSublayer:self.previewLayer];
 
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_USER_INITIATED, 0), ^{
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         [self.captureSession startRunning];
     });
 }
