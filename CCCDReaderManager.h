@@ -12,8 +12,11 @@
 @interface CCCDReaderManager : NSObject <NFCTagReaderSessionDelegate>
 
 @property (nonatomic, weak) id<CCCDReaderManagerDelegate> delegate;
+@property (nonatomic, copy) NSArray<NSData *> *candidateSeeds;
 
+- (instancetype)initWithCandidateSeeds:(NSArray<NSData *> *)candidateSeeds;
 - (instancetype)initWithSeed:(NSData *)seed;
+- (void)updateCandidateSeeds:(NSArray<NSData *> *)candidateSeeds;
 - (void)updateSeed:(NSData *)seed;
 - (void)startScanning;
 - (void)stopScanning;

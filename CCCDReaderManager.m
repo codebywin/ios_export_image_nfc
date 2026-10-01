@@ -6,22 +6,36 @@
 
 @interface CCCDReaderManager ()
 @property (nonatomic, strong) NFCTagReaderSession *session;
-@property (nonatomic, strong) NSData *bacSeed;
 @property (nonatomic, strong) BACSession *bacSession;
+@property (nonatomic, assign) uint8_t lastErrorSW1;
+@property (nonatomic, assign) uint8_t lastErrorSW2;
 @end
 
 @implementation CCCDReaderManager
 
-- (instancetype)initWithSeed:(NSData *)seed {
+- (instancetype)initWithCandidateSeeds:(NSArray<NSData *> *)candidateSeeds {
     self = [super init];
     if (self) {
-        _bacSeed = seed;
+        _candidateSeeds = [candidateSeeds copy];
     }
     return self;
 }
 
+- (instancetype)initWithSeed:(NSData *)seed {
+    if (seed) {
+        return [self initWithCandidateSeeds:@[seed]];
+    }
+    return [self initWithCandidateSeeds:@[]];
+}
+
+- (void)updateCandidateSeeds:(NSArray<NSData *> *)candidateSeeds {
+    self.candidateSeeds = [candidateSeeds copy];
+}
+
 - (void)updateSeed:(NSData *)seed {
-    self.bacSeed = seed;
+    if (seed) {
+        self.candidateSeeds = @[seed];
+    }
 }
 
 - (void)startScanning {
@@ -112,141 +126,170 @@
             return;
         }
 
-        session.alertMessage = @"Đang xác thực bảo mật BAC... Giữ yên thẻ.";
-        [self authenticateBACWithTag:tag session:session completion:^(BOOL success) {
+        if (self.candidateSeeds.count == 0) {
+            [session invalidateSessionWithErrorMessage:@"Không có thông tin khóa xác thực BAC."];
+            return;
+        }
+
+        [self tryBACWithCandidateIndex:0 tag:tag session:session completion:^(BOOL success) {
             if (success) {
-                session.alertMessage = @"Đang đọc ảnh chân dung (DG2)...";
+                session.alertMessage = @"Đang đọc ảnh chân dung (DG2)... Giữ yên thẻ.";
                 [self readDG2WithTag:tag session:session];
             } else {
-                [session invalidateSessionWithErrorMessage:@"Xác thực chip thất bại! Kiểm tra lại thông tin mặt sau/CAN."];
+                NSString *err = [NSString stringWithFormat:@"Xác thực chip thất bại (SW=%02X%02X). Vui lòng kiểm tra lại Số CCCD/Ngày sinh.", self.lastErrorSW1, self.lastErrorSW2];
+                [session invalidateSessionWithErrorMessage:err];
             }
         }];
     }];
 }
 
-// MARK: - BAC Authentication
+// MARK: - BAC Authentication (Multi-candidate retry loop)
 
-- (void)authenticateBACWithTag:(id<NFCISO7816Tag>)tag
-                       session:(NFCTagReaderSession *)session
-                    completion:(void(^)(BOOL success))completion {
-    NSData *kEnc = nil;
-    NSData *kMac = nil;
-    if (![CryptoUtils deriveBACKeysWithSeed:self.bacSeed kEnc:&kEnc kMac:&kMac]) {
+- (void)tryBACWithCandidateIndex:(NSUInteger)index
+                             tag:(id<NFCISO7816Tag>)tag
+                         session:(NFCTagReaderSession *)session
+                      completion:(void(^)(BOOL success))completion {
+
+    if (index >= self.candidateSeeds.count) {
         completion(NO);
         return;
     }
 
-    // GET CHALLENGE: 00 84 00 00 08
-    NFCISO7816APDU *getChallenge = [BACSession createAPDUWithCla:0x00
-                                                             ins:0x84
-                                                              p1:0x00
-                                                              p2:0x00
-                                                            data:nil
-                                                              le:8];
+    session.alertMessage = [NSString stringWithFormat:@"Đang xác thực chip CCCD (%lu/%lu)... Giữ yên thẻ.", (unsigned long)index + 1, (unsigned long)self.candidateSeeds.count];
 
-    [tag sendCommandAPDU:getChallenge completionHandler:^(NSData * _Nonnull respData, uint8_t sw1, uint8_t sw2, NSError * _Nullable error) {
-        if (sw1 != 0x90 || sw2 != 0x00 || respData.length != 8) {
-            completion(NO);
-            return;
-        }
+    NSData *currentSeed = self.candidateSeeds[index];
+    NSData *kEnc = nil;
+    NSData *kMac = nil;
+    if (![CryptoUtils deriveBACKeysWithSeed:currentSeed kEnc:&kEnc kMac:&kMac]) {
+        [self tryBACWithCandidateIndex:index + 1 tag:tag session:session completion:completion];
+        return;
+    }
 
-        NSData *rndICC = respData;
+    void (^performChallengeAndAuth)(void) = ^{
+        // GET CHALLENGE: 00 84 00 00 08
+        NFCISO7816APDU *getChallenge = [BACSession createAPDUWithCla:0x00
+                                                                 ins:0x84
+                                                                  p1:0x00
+                                                                  p2:0x00
+                                                                data:nil
+                                                                  le:8];
 
-        // Sinh ngẫu nhiên RND.IFD (8 bytes) và k_ifd (16 bytes)
-        uint8_t rndIFDBytes[8];
-        uint8_t kIFDBytes[16];
-        (void)SecRandomCopyBytes(kSecRandomDefault, 8, rndIFDBytes);
-        (void)SecRandomCopyBytes(kSecRandomDefault, 16, kIFDBytes);
-
-        NSData *rndIFD = [NSData dataWithBytes:rndIFDBytes length:8];
-        NSData *kIFD = [NSData dataWithBytes:kIFDBytes length:16];
-
-        // S = RND.IFD || RND.ICC || k_ifd (32 bytes)
-        NSMutableData *s = [NSMutableData data];
-        [s appendData:rndIFD];
-        [s appendData:rndICC];
-        [s appendData:kIFD];
-
-        NSData *eIFD = [CryptoUtils tripleDESEncryptCBC:s key:kEnc iv:nil];
-        NSData *mIFD = [CryptoUtils calculateRetailMAC:eIFD key:kMac];
-        if (!eIFD || !mIFD) {
-            completion(NO);
-            return;
-        }
-
-        // EXTERNAL AUTHENTICATE: 00 82 00 00 28 [eIFD || mIFD] 28
-        NSMutableData *authData = [NSMutableData data];
-        [authData appendData:eIFD];
-        [authData appendData:mIFD];
-
-        NFCISO7816APDU *extAuth = [BACSession createAPDUWithCla:0x00
-                                                            ins:0x82
-                                                             p1:0x00
-                                                             p2:0x00
-                                                           data:authData
-                                                             le:0x28];
-
-        [tag sendCommandAPDU:extAuth completionHandler:^(NSData * _Nonnull authResp, uint8_t aSw1, uint8_t aSw2, NSError * _Nullable aErr) {
-            if (aSw1 != 0x90 || aSw2 != 0x00 || authResp.length < 40) {
-                completion(NO);
+        [tag sendCommandAPDU:getChallenge completionHandler:^(NSData * _Nonnull respData, uint8_t sw1, uint8_t sw2, NSError * _Nullable error) {
+            if (sw1 != 0x90 || sw2 != 0x00 || respData.length != 8) {
+                self.lastErrorSW1 = sw1;
+                self.lastErrorSW2 = sw2;
+                NSLog(@"[BAC] GET CHALLENGE thất bại: sw1=%02X sw2=%02X", sw1, sw2);
+                [self tryBACWithCandidateIndex:index + 1 tag:tag session:session completion:completion];
                 return;
             }
 
-            NSData *eICC = [authResp subdataWithRange:NSMakeRange(0, 32)];
-            NSData *mICC = [authResp subdataWithRange:NSMakeRange(32, 8)];
+            NSData *rndICC = respData;
 
-            // Kiểm tra MAC từ thẻ
-            NSData *expectedMICC = [CryptoUtils calculateRetailMAC:eICC key:kMac];
-            if (![expectedMICC isEqualToData:mICC]) {
-                completion(NO);
+            // Sinh ngẫu nhiên RND.IFD (8 bytes) và k_ifd (16 bytes)
+            uint8_t rndIFDBytes[8];
+            uint8_t kIFDBytes[16];
+            (void)SecRandomCopyBytes(kSecRandomDefault, 8, rndIFDBytes);
+            (void)SecRandomCopyBytes(kSecRandomDefault, 16, kIFDBytes);
+
+            NSData *rndIFD = [NSData dataWithBytes:rndIFDBytes length:8];
+            NSData *kIFD = [NSData dataWithBytes:kIFDBytes length:16];
+
+            // S = RND.IFD || RND.ICC || k_ifd (32 bytes)
+            NSMutableData *s = [NSMutableData data];
+            [s appendData:rndIFD];
+            [s appendData:rndICC];
+            [s appendData:kIFD];
+
+            NSData *eIFD = [CryptoUtils tripleDESEncryptCBC:s key:kEnc iv:nil];
+            NSData *mIFD = [CryptoUtils calculateRetailMAC:eIFD key:kMac];
+            if (!eIFD || !mIFD) {
+                [self tryBACWithCandidateIndex:index + 1 tag:tag session:session completion:completion];
                 return;
             }
 
-            // Giải mã eICC
-            NSData *decryptedICC = [CryptoUtils tripleDESDecryptCBC:eICC key:kEnc iv:nil];
-            if (!decryptedICC || decryptedICC.length < 32) {
-                completion(NO);
-                return;
-            }
+            // EXTERNAL AUTHENTICATE: 00 82 00 00 28 [eIFD || mIFD] 28
+            NSMutableData *authData = [NSMutableData data];
+            [authData appendData:eIFD];
+            [authData appendData:mIFD];
 
-            NSData *respRndICC = [decryptedICC subdataWithRange:NSMakeRange(0, 8)];
-            NSData *respRndIFD = [decryptedICC subdataWithRange:NSMakeRange(8, 8)];
-            NSData *kICC = [decryptedICC subdataWithRange:NSMakeRange(16, 16)];
+            NFCISO7816APDU *extAuth = [BACSession createAPDUWithCla:0x00
+                                                                ins:0x82
+                                                                 p1:0x00
+                                                                 p2:0x00
+                                                               data:authData
+                                                                 le:0x28];
 
-            if (![respRndIFD isEqualToData:rndIFD]) {
-                completion(NO);
-                return;
-            }
+            [tag sendCommandAPDU:extAuth completionHandler:^(NSData * _Nonnull authResp, uint8_t aSw1, uint8_t aSw2, NSError * _Nullable aErr) {
+                if (aSw1 == 0x90 && aSw2 == 0x00 && authResp.length >= 40) {
+                    NSData *eICC = [authResp subdataWithRange:NSMakeRange(0, 32)];
+                    NSData *mICC = [authResp subdataWithRange:NSMakeRange(32, 8)];
 
-            // K_seed_session = kIFD XOR kICC
-            const uint8_t *kIFDBytesPtr = (const uint8_t *)kIFD.bytes;
-            const uint8_t *kICCBytesPtr = (const uint8_t *)kICC.bytes;
-            uint8_t sessionSeedBytes[16];
-            for (int i = 0; i < 16; i++) {
-                sessionSeedBytes[i] = kIFDBytesPtr[i] ^ kICCBytesPtr[i];
-            }
-            NSData *sessionSeed = [NSData dataWithBytes:sessionSeedBytes length:16];
+                    // Kiểm tra MAC từ thẻ
+                    NSData *expectedMICC = [CryptoUtils calculateRetailMAC:eICC key:kMac];
+                    if ([expectedMICC isEqualToData:mICC]) {
+                        // Giải mã eICC
+                        NSData *decryptedICC = [CryptoUtils tripleDESDecryptCBC:eICC key:kEnc iv:nil];
+                        if (decryptedICC && decryptedICC.length >= 32) {
+                            NSData *respRndICC = [decryptedICC subdataWithRange:NSMakeRange(0, 8)];
+                            NSData *respRndIFD = [decryptedICC subdataWithRange:NSMakeRange(8, 8)];
+                            NSData *kICC = [decryptedICC subdataWithRange:NSMakeRange(16, 16)];
 
-            NSData *ksEnc = nil;
-            NSData *ksMac = nil;
-            if (![CryptoUtils deriveBACKeysWithSeed:sessionSeed kEnc:&ksEnc kMac:&ksMac]) {
-                completion(NO);
-                return;
-            }
+                            if ([respRndIFD isEqualToData:rndIFD]) {
+                                // K_seed_session = kIFD XOR kICC
+                                const uint8_t *kIFDBytesPtr = (const uint8_t *)kIFD.bytes;
+                                const uint8_t *kICCBytesPtr = (const uint8_t *)kICC.bytes;
+                                uint8_t sessionSeedBytes[16];
+                                for (int i = 0; i < 16; i++) {
+                                    sessionSeedBytes[i] = kIFDBytesPtr[i] ^ kICCBytesPtr[i];
+                                }
+                                NSData *sessionSeed = [NSData dataWithBytes:sessionSeedBytes length:16];
 
-            // SSC ban đầu: RND.ICC[4..8] || RND.IFD[4..8]
-            NSMutableData *sscData = [NSMutableData data];
-            [sscData appendData:[respRndICC subdataWithRange:NSMakeRange(4, 4)]];
-            [sscData appendData:[rndIFD subdataWithRange:NSMakeRange(4, 4)]];
+                                NSData *ksEnc = nil;
+                                NSData *ksMac = nil;
+                                if ([CryptoUtils deriveBACKeysWithSeed:sessionSeed kEnc:&ksEnc kMac:&ksMac]) {
+                                    // SSC ban đầu: RND.ICC[4..8] || RND.IFD[4..8]
+                                    NSMutableData *sscData = [NSMutableData data];
+                                    [sscData appendData:[respRndICC subdataWithRange:NSMakeRange(4, 4)]];
+                                    [sscData appendData:[rndIFD subdataWithRange:NSMakeRange(4, 4)]];
 
-            uint64_t initialSSC = 0;
-            memcpy(&initialSSC, sscData.bytes, 8);
-            initialSSC = CFSwapInt64BigToHost(initialSSC);
+                                    uint64_t initialSSC = 0;
+                                    memcpy(&initialSSC, sscData.bytes, 8);
+                                    initialSSC = CFSwapInt64BigToHost(initialSSC);
 
-            self.bacSession = [[BACSession alloc] initWithKsEnc:ksEnc ksMac:ksMac initialSSC:initialSSC];
-            completion(YES);
+                                    self.bacSession = [[BACSession alloc] initWithKsEnc:ksEnc ksMac:ksMac initialSSC:initialSSC];
+                                    NSLog(@"[BAC] Xác thực chip thành công ở ứng viên số %lu!", (unsigned long)index + 1);
+                                    completion(YES);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                self.lastErrorSW1 = aSw1;
+                self.lastErrorSW2 = aSw2;
+                NSLog(@"[BAC] Ứng viên %lu thất bại (SW: %02X %02X). Đang thử phương án tiếp theo...", (unsigned long)index + 1, aSw1, aSw2);
+                [self tryBACWithCandidateIndex:index + 1 tag:tag session:session completion:completion];
+            }];
         }];
-    }];
+    };
+
+    if (index > 0) {
+        // Re-select AID để reset security environment của thẻ sau lệnh thất bại
+        uint8_t aidBytes[] = {0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
+        NSData *aidData = [NSData dataWithBytes:aidBytes length:sizeof(aidBytes)];
+        NFCISO7816APDU *selectAID = [BACSession createAPDUWithCla:0x00
+                                                              ins:0xA4
+                                                               p1:0x04
+                                                               p2:0x0C
+                                                             data:aidData
+                                                               le:-1];
+        [tag sendCommandAPDU:selectAID completionHandler:^(NSData * _Nonnull resp, uint8_t sSw1, uint8_t sSw2, NSError * _Nullable sErr) {
+            performChallengeAndAuth();
+        }];
+    } else {
+        performChallengeAndAuth();
+    }
 }
 
 // MARK: - Read DG2 (Data Group 2)

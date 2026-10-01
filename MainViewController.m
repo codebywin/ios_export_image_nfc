@@ -69,6 +69,7 @@
     [self setupUI];
     [self setupActions];
     [self updateAuthMode];
+    [self loadLastInputs];
 
     // Chạm bất kỳ đâu ra ngoài để ẩn bàn phím
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissKeyboard)];
@@ -219,19 +220,19 @@
     [self.mrzContainer addSubview:mrzHelpLabel];
 
     self.docNumberTextField = [[UITextField alloc] init];
-    self.docNumberTextField.placeholder = @"Số CCCD (12 chữ số)";
+    self.docNumberTextField.placeholder = @"Số CCCD (12 số, VD: 079201001234)";
     self.docNumberTextField.borderStyle = UITextBorderStyleRoundedRect;
     self.docNumberTextField.keyboardType = UIKeyboardTypeNumberPad;
     [self addDoneButtonToTextField:self.docNumberTextField];
 
     self.dobTextField = [[UITextField alloc] init];
-    self.dobTextField.placeholder = @"Ngày sinh YYMMDD (VD: 15/08/1995 -> 950815)";
+    self.dobTextField.placeholder = @"Ngày sinh (8 số DDMMYYYY hoặc 6 số YYMMDD)";
     self.dobTextField.borderStyle = UITextBorderStyleRoundedRect;
     self.dobTextField.keyboardType = UIKeyboardTypeNumberPad;
     [self addDoneButtonToTextField:self.dobTextField];
 
     self.doeTextField = [[UITextField alloc] init];
-    self.doeTextField.placeholder = @"Ngày hết hạn YYMMDD (VD: 15/08/2035 -> 350815)";
+    self.doeTextField.placeholder = @"Ngày hết hạn (8 số DDMMYYYY hoặc 6 số YYMMDD)";
     self.doeTextField.borderStyle = UITextBorderStyleRoundedRect;
     self.doeTextField.keyboardType = UIKeyboardTypeNumberPad;
     [self addDoneButtonToTextField:self.doeTextField];
@@ -458,31 +459,57 @@
     }
 }
 
+// MARK: - Lưu & Tải Thông Tin Đã Nhập
+- (void)saveLastInputsWithDoc:(NSString *)doc dob:(NSString *)dob doe:(NSString *)doe {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if (doc) [defaults setObject:doc forKey:@"last_cccd_number"];
+    if (dob) [defaults setObject:dob forKey:@"last_dob"];
+    if (doe) [defaults setObject:doe forKey:@"last_expiry"];
+    [defaults synchronize];
+}
+
+- (void)loadLastInputs {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *doc = [defaults stringForKey:@"last_cccd_number"];
+    NSString *dob = [defaults stringForKey:@"last_dob"];
+    NSString *doe = [defaults stringForKey:@"last_expiry"];
+    if (doc.length > 0) self.docNumberTextField.text = doc;
+    if (dob.length > 0) self.dobTextField.text = dob;
+    if (doe.length > 0) self.doeTextField.text = doe;
+    if (doc.length > 0 && dob.length > 0 && doe.length > 0) {
+        self.scannedDocNumber = doc;
+        self.scannedDOB = dob;
+        self.scannedDOE = doe;
+    }
+}
+
 // MARK: - Handle NFC Scan
 - (void)handleStartNFC {
     [self dismissKeyboard];
-    NSData *seed = nil;
+    NSArray<NSData *> *candidateSeeds = nil;
 
     switch (self.segmentAuth.selectedSegmentIndex) {
-        case 0: {
+        case 0: { // Quét Camera
             if (self.scannedDocNumber.length > 0 && self.scannedDOB.length > 0 && self.scannedDOE.length > 0) {
-                seed = [CryptoUtils calculateBACSeedWithDoc:self.scannedDocNumber birth:self.scannedDOB expiry:self.scannedDOE];
+                candidateSeeds = [CryptoUtils generateCandidateBACSeedsWithDoc:self.scannedDocNumber birth:self.scannedDOB expiry:self.scannedDOE];
+                [self saveLastInputsWithDoc:self.scannedDocNumber dob:self.scannedDOB doe:self.scannedDOE];
             } else {
-                [self showAlertWithTitle:@"Chưa quét mặt sau" message:@"Vui lòng bấm 'Mở Camera Quét Mặt Sau Thẻ' trước khi quét NFC."];
+                [self showAlertWithTitle:@"Chưa quét mặt sau" message:@"Vui lòng bấm 'Mở Camera Quét Mặt Sau Thẻ' trước hoặc chuyển qua tab 'Nhập Tay' để điền thông tin."];
                 return;
             }
             break;
         }
-        case 1: {
+        case 1: { // Mã CAN
             NSString *can = [self.canTextField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
             if (can.length != 6) {
                 [self showAlertWithTitle:@"Mã CAN không hợp lệ" message:@"Vui lòng nhập đủ 6 chữ số CAN in ở mặt trước CCCD."];
                 return;
             }
-            seed = [CryptoUtils calculateCANSeed:can];
+            NSData *canSeed = [CryptoUtils calculateCANSeed:can];
+            if (canSeed) candidateSeeds = @[canSeed];
             break;
         }
-        case 2: {
+        case 2: { // Nhập Tay
             NSString *doc = [self.docNumberTextField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
             NSString *dob = [self.dobTextField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
             NSString *doe = [self.doeTextField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -491,19 +518,25 @@
                 return;
             }
             self.scannedDocNumber = doc;
-            seed = [CryptoUtils calculateBACSeedWithDoc:doc birth:dob expiry:doe];
+            self.scannedDOB = dob;
+            self.scannedDOE = doe;
+            candidateSeeds = [CryptoUtils generateCandidateBACSeedsWithDoc:doc birth:dob expiry:doe];
+            [self saveLastInputsWithDoc:doc dob:dob doe:doe];
             break;
         }
         default:
             break;
     }
 
-    if (!seed) return;
+    if (!candidateSeeds || candidateSeeds.count == 0) {
+        [self showAlertWithTitle:@"Lỗi tạo khóa" message:@"Không thể tạo khóa xác thực từ dữ liệu đã nhập. Vui lòng kiểm tra lại."];
+        return;
+    }
 
     [self.activityIndicator startAnimating];
-    self.statusLabel.text = @"Đang kích hoạt NFC... Vui lòng áp sát thẻ vào đầu máy iPhone.";
+    self.statusLabel.text = [NSString stringWithFormat:@"Đang kích hoạt NFC (%lu phương án xác thực)... Hãy áp lưng iPhone vào chip thẻ.", (unsigned long)candidateSeeds.count];
 
-    self.cccdReader = [[CCCDReaderManager alloc] initWithSeed:seed];
+    self.cccdReader = [[CCCDReaderManager alloc] initWithCandidateSeeds:candidateSeeds];
     self.cccdReader.delegate = self;
     [self.cccdReader startScanning];
 }

@@ -11,4 +11,3 @@
 @property (nonatomic, weak) id<MRZScannerDelegate> delegate;
 
 @end
-

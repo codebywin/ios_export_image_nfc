@@ -16,6 +16,8 @@
 + (BOOL)deriveBACKeysWithSeed:(NSData *)seed kEnc:(NSData **)outEnc kMac:(NSData **)outMac;
 
 + (NSString *)calculateCheckDigit:(NSString *)input;
++ (NSString *)normalizeDateToYYMMDD:(NSString *)dateStr;
++ (NSArray<NSData *> *)generateCandidateBACSeedsWithDoc:(NSString *)doc birth:(NSString *)birth expiry:(NSString *)expiry;
 + (NSData *)calculateBACSeedWithDoc:(NSString *)doc birth:(NSString *)birth expiry:(NSString *)expiry;
 + (NSData *)calculateCANSeed:(NSString *)can;
 
