@@ -349,17 +349,25 @@
                                                                  le:-1];
 
     [tag sendCommandAPDU:selectDG2 completionHandler:^(NSData * _Nonnull respData, uint8_t sw1, uint8_t sw2, NSError * _Nullable error) {
-        [CCCDReaderManager log:@"SELECT DG2 (01 02) - SW=%02X%02X, response len=%lu", sw1, sw2, (unsigned long)respData.length];
+        [CCCDReaderManager log:@"SELECT DG2 (01 02) - SW=%02X%02X, response len=%lu, hex=%@", sw1, sw2, (unsigned long)respData.length, respData];
+        
+        // Bắt buộc unwrap response của SELECT để đồng bộ SSC.
+        // Nếu bỏ qua, MAC của lệnh READ BINARY tiếp theo sẽ sai và thẻ trả 6988.
+        uint8_t selSw1 = 0, selSw2 = 0;
+        NSData *selPlain = [self.bacSession unwrapResponseData:respData sw1:&selSw1 sw2:&selSw2];
+        [CCCDReaderManager log:@"SELECT DG2 unwrapped - SW=%02X%02X, plain len=%lu", selSw1, selSw2, (unsigned long)(selPlain ? selPlain.length : 0)];
+        
         if (sw1 != 0x90 || sw2 != 0x00) {
-            [CCCDReaderManager log:@"WARNING: SELECT DG2 failed with SW=%02X%02X", sw1, sw2];
+            [CCCDReaderManager log:@"WARNING: SELECT DG2 returned SW=%02X%02X", sw1, sw2];
         }
-        // 2. READ BINARY 4 bytes đầu để parse độ dài DG2
+        
+        // 2. READ BINARY 8 bytes đầu để lấy TLV header: 61 75 <len>
         NFCISO7816APDU *readHdr = [self.bacSession wrapCommandWithCla:0x00
                                                                   ins:0xB0
                                                                    p1:0x00
                                                                    p2:0x00
                                                                  data:[NSData data]
-                                                                   le:0x04];
+                                                                   le:0x08];
 
         [tag sendCommandAPDU:readHdr completionHandler:^(NSData * _Nonnull hdrResp, uint8_t hSw1, uint8_t hSw2, NSError * _Nullable hErr) {
             [CCCDReaderManager log:@"READ BINARY header response - SW=%02X%02X, encrypted length=%lu, hex=%@", hSw1, hSw2, (unsigned long)hdrResp.length, hdrResp];
@@ -428,9 +436,12 @@
     session.alertMessage = [NSString stringWithFormat:@"Đang tải ảnh chân dung: %lu%%... Giữ yên thẻ.", (unsigned long)progress];
 
     [tag sendCommandAPDU:readCmd completionHandler:^(NSData * _Nonnull chunkResp, uint8_t sw1, uint8_t sw2, NSError * _Nullable error) {
+        [CCCDReaderManager log:@"READ chunk offset=%lu, chunk=%lu -> response len=%lu, SW=%02X%02X, hex=%@", (unsigned long)offset, (unsigned long)chunkSize, (unsigned long)chunkResp.length, sw1, sw2, chunkResp];
+        
         uint8_t oSw1 = 0, oSw2 = 0;
         NSData *plainChunk = [self.bacSession unwrapResponseData:chunkResp sw1:&oSw1 sw2:&oSw2];
         if (!plainChunk || plainChunk.length == 0) {
+            [CCCDReaderManager log:@"READ chunk failed at offset %lu: plainChunk empty, unwrap SW=%02X%02X", (unsigned long)offset, oSw1, oSw2];
             [session invalidateSessionWithErrorMessage:@"Đứt kết nối khi đang tải ảnh."];
             return;
         }
@@ -442,19 +453,58 @@
 
 - (NSUInteger)parseDG2Length:(NSData *)header {
     const uint8_t *bytes = (const uint8_t *)header.bytes;
+    NSUInteger len = header.length;
     
-    // Case 1: Header có byte 0x81 (1 byte length: totalLen = bytes[3] + 4)
-    if (header.length >= 3 && bytes[2] == 0x81 && header.length >= 4) {
-        return (NSUInteger)bytes[3] + 4;
+    if (len < 4) {
+        [CCCDReaderManager log:@"DG2 header too short (%lu bytes): %@", (unsigned long)len, header];
+        return 0;
     }
     
-    // Case 2: Header có byte 0x82 (2 bytes length: totalLen = (bytes[3]<<8 | bytes[4]) + 5)
-    if (header.length >= 3 && bytes[2] == 0x82 && header.length >= 5) {
+    // Duyệt TLV: tag 0x75 = Biometric Reference Template
+    NSUInteger offset = 0;
+    while (offset + 2 < len) {
+        uint8_t tag = bytes[offset];
+        NSUInteger length = 0;
+        NSUInteger lenBytePos = offset + 1;
+        
+        if (lenBytePos >= len) break;
+        
+        uint8_t lenByte = bytes[lenBytePos];
+        NSUInteger lengthBytes = 1;
+        
+        if (lenByte < 0x80) {
+            length = lenByte;
+        } else if (lenByte == 0x81 && lenBytePos + 1 < len) {
+            length = bytes[lenBytePos + 1];
+            lengthBytes = 2;
+        } else if (lenByte == 0x82 && lenBytePos + 2 < len) {
+            length = ((NSUInteger)bytes[lenBytePos + 1] << 8) | bytes[lenBytePos + 2];
+            lengthBytes = 3;
+        } else {
+            [CCCDReaderManager log:@"Invalid TLV length encoding at offset %lu", (unsigned long)offset];
+            break;
+        }
+        
+        // Nếu tag là 0x75, đây là Biometric Reference Template
+        if (tag == 0x75 || tag == 0x7F) {
+            NSUInteger totalLen = offset + 1 + lengthBytes + length;
+            [CCCDReaderManager log:@"Found tag 0x%02X at offset %lu, length=%lu, total DG2 size=%lu", tag, (unsigned long)offset, (unsigned long)length, (unsigned long)totalLen];
+            return totalLen;
+        }
+        
+        // Di chuyển đến TLV tiếp theo
+        offset = lenBytePos + lengthBytes + length;
+    }
+    
+    // Fallback: parse kiểu cũ
+    if (bytes[2] == 0x81 && len >= 4) {
+        return (NSUInteger)bytes[3] + 4;
+    }
+    if (bytes[2] == 0x82 && len >= 5) {
         return (((NSUInteger)bytes[3]) << 8 | bytes[4]) + 5;
     }
     
-    // Case 3: Header format không hỗ trợ - trả về 0 để caller xử lý lỗi
-    [CCCDReaderManager log:@"Cannot parse DG2 length from header. Header hex: %@", header];
+    [CCCDReaderManager log:@"Cannot find tag 0x75/0x7F in DG2 header. Hex: %@", header];
     return 0;
 }
 
