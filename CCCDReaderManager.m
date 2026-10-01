@@ -402,10 +402,10 @@
 
     NSUInteger offset = accumulated.length;
     if (offset >= totalLength) {
-        // Hoàn thành đọc DG2
+        [CCCDReaderManager log:@"DG2 fully read: %lu bytes, starting image decode", (unsigned long)offset];
         [session setAlertMessage:@"Giải mã ảnh chân dung thành công!"];
-        [session invalidateSession];
 
+        // Decode TRƯỚC khi invalidate session (tránh mất quyền truy cập)
         dispatch_async(dispatch_get_main_queue(), ^{
             UIImage *image = [DG2Parser extractImageFromDG2Data:accumulated];
             if (image) {
@@ -417,6 +417,8 @@
                     [self.delegate cccdReaderDidFailWithError:@"Đã tải xong DG2 nhưng không giải mã được ảnh."];
                 }
             }
+
+            [session invalidateSession];
         });
         return;
     }
