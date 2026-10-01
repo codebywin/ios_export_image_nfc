@@ -8,30 +8,20 @@
     NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
 
-    static NSArray<NSString *> *logPaths = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-        logPaths = @[
-            @"/var/mobile/Library/Caches/cccd_debug.log",
-            [docs stringByAppendingPathComponent:@"cccd_debug.log"],
-        ];
-    });
+    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], msg];
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
 
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], msg];
-        NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
-        for (NSString *path in logPaths) {
-            NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
-            if (!fh) {
-                [[NSFileManager defaultManager] createFileAtPath:path contents:data attributes:nil];
-            } else {
-                [fh seekToEndOfFile];
-                [fh writeData:data];
-                [fh closeFile];
-            }
-        }
-    });
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *path = @"/var/mobile/Library/Caches/cccd_debug.log";
+
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!fh) {
+        [fm createFileAtPath:path contents:data attributes:nil];
+    } else {
+        [fh seekToEndOfFile];
+        [fh writeData:data];
+        [fh closeFile];
+    }
 }
 
 + (UIImage *)extractImageFromDG2Data:(NSData *)dg2Data {
@@ -53,11 +43,11 @@
     // Dump ảnh thô ra nhiều vị trí để phân tích
     NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
     NSArray<NSString *> *dumpPaths = @[
-        @"/var/mobile/Library/Caches/dg2_face_raw.bin",
         [docs stringByAppendingPathComponent:@"dg2_face_raw.bin"],
+        @"/var/mobile/Library/Caches/dg2_face_raw.bin",
     ];
     for (NSString *p in dumpPaths) {
-        BOOL ok = [imageData writeToFile:p atomically:YES];
+        BOOL ok = [imageData writeToFile:p atomically:NO];
         [DG2Parser log:@"Dump to %@: %@", p, ok ? @"OK" : @"FAILED"];
     }
 

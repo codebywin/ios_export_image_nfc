@@ -2,6 +2,29 @@
 #import <AVFoundation/AVFoundation.h>
 #import <Vision/Vision.h>
 
+// Ghi log vào cùng file với CCCDReaderManager để debug qua SSH
+static void MRZLog(NSString *format, ...) {
+    va_list args;
+    va_start(args, format);
+    NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+
+    NSLog(@"[MRZ] %@", msg);
+
+    NSString *line = [NSString stringWithFormat:@"[%@] [MRZ] %@\n", [NSDate date], msg];
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+    NSString *path = @"/var/mobile/Library/Caches/cccd_debug.log";
+
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!fh) {
+        [[NSFileManager defaultManager] createFileAtPath:path contents:data attributes:nil];
+    } else {
+        [fh seekToEndOfFile];
+        [fh writeData:data];
+        [fh closeFile];
+    }
+}
+
 @interface MRZScannerViewController () <AVCaptureVideoDataOutputSampleBufferDelegate>
 @property (nonatomic, strong) AVCaptureSession *captureSession;
 @property (nonatomic, strong) AVCaptureVideoDataOutput *videoOutput;
@@ -23,6 +46,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    MRZLog(@"MRZScannerViewController viewDidLoad");
     self.view.backgroundColor = [UIColor blackColor];
     [self setupUI];
     [self checkCameraPermissionAndSetup];
@@ -42,10 +66,12 @@
 
 - (void)checkCameraPermissionAndSetup {
     AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+    MRZLog(@"Camera authorization status = %d", (int)status);
     if (status == AVAuthorizationStatusAuthorized) {
         [self setupCamera];
     } else if (status == AVAuthorizationStatusNotDetermined) {
         [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
+            MRZLog(@"Camera permission request result: %@", granted ? @"GRANTED" : @"DENIED");
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (granted) {
                     [self setupCamera];
@@ -55,6 +81,7 @@
             });
         }];
     } else {
+        MRZLog(@"Camera permission DENIED/RESTRICTED - showing alert");
         [self showPermissionAlert];
     }
 }
@@ -70,6 +97,7 @@
 }
 
 - (void)setupCamera {
+    MRZLog(@"setupCamera starting...");
     self.captureSession = [[AVCaptureSession alloc] init];
     self.captureSession.sessionPreset = AVCaptureSessionPreset1920x1080;
 
@@ -78,8 +106,13 @@
                                                                  position:AVCaptureDevicePositionBack];
     if (!camera) {
         camera = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+        MRZLog(@"Wide angle back camera not found, using default: %@", camera.localizedName);
     }
-    if (!camera) return;
+    if (!camera) {
+        MRZLog(@"ERROR: No camera device available at all");
+        return;
+    }
+    MRZLog(@"Using camera: %@ (position=%ld)", camera.localizedName, (long)camera.position);
 
     // Macro autofocus & zoom 1.6x để camera lấy nét nét nhất khi chụp CCCD
     NSError *lockErr = nil;
@@ -97,12 +130,23 @@
             camera.videoZoomFactor = 1.6;
         }
         [camera unlockForConfiguration];
+        MRZLog(@"Camera config applied, zoom=%.2f", camera.videoZoomFactor);
+    } else {
+        MRZLog(@"WARNING: lockForConfiguration failed: %@", lockErr.localizedDescription);
     }
 
     NSError *inputError = nil;
     AVCaptureDeviceInput *input = [AVCaptureDeviceInput deviceInputWithDevice:camera error:&inputError];
-    if (input && [self.captureSession canAddInput:input]) {
+    if (!input) {
+        MRZLog(@"ERROR: Cannot create device input: %@", inputError.localizedDescription);
+        return;
+    }
+    if ([self.captureSession canAddInput:input]) {
         [self.captureSession addInput:input];
+        MRZLog(@"Camera input added to session");
+    } else {
+        MRZLog(@"ERROR: Cannot add input to session");
+        return;
     }
 
     self.videoOutput = [[AVCaptureVideoDataOutput alloc] init];
@@ -111,6 +155,10 @@
     [self.videoOutput setSampleBufferDelegate:self queue:queue];
     if ([self.captureSession canAddOutput:self.videoOutput]) {
         [self.captureSession addOutput:self.videoOutput];
+        MRZLog(@"Video output added to session");
+    } else {
+        MRZLog(@"ERROR: Cannot add video output to session");
+        return;
     }
 
     // Thiết lập chiều xoay Portrait chuẩn xác cho cả luồng video và preview
@@ -125,9 +173,11 @@
         self.previewLayer.connection.videoOrientation = AVCaptureVideoOrientationPortrait;
     }
     [self.view.layer insertSublayer:self.previewLayer atIndex:0];
+    MRZLog(@"Preview layer added to view");
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         [self.captureSession startRunning];
+        MRZLog(@"Capture session started running");
     });
 }
 
@@ -264,6 +314,7 @@
 
     if (self.isProcessing) return;
     self.isProcessing = YES;
+    MRZLog(@"Frame received: %ld x %ld px", CVPixelBufferGetWidth(pixelBuffer), CVPixelBufferGetHeight(pixelBuffer));
 
     [self processPixelBuffer:pixelBuffer isManual:NO];
 }
@@ -286,9 +337,16 @@
 }
 
 - (void)processPixelBuffer:(CVPixelBufferRef)pixelBuffer isManual:(BOOL)isManual {
+    static NSUInteger frameCounter = 0;
+    frameCounter++;
+
     VNRecognizeTextRequest *request = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest * _Nonnull req, NSError * _Nullable error) {
         self.isProcessing = NO;
         if (error || !req.results || req.results.count == 0) {
+            if (frameCounter % 30 == 0) {
+                MRZLog(@"OCR frame #%lu: no text detected (error=%@, results=%lu)",
+                       (unsigned long)frameCounter, error.localizedDescription, (unsigned long)(req.results ? req.results.count : 0));
+            }
             if (isManual) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     [self showManualResultAlertWithDoc:nil birth:nil expiry:nil lines:@[]];
@@ -300,6 +358,11 @@
         NSArray<VNRecognizedTextObservation *> *observations = (NSArray<VNRecognizedTextObservation *> *)req.results;
         NSArray<NSString *> *lines = [self clusterObservationsIntoLines:observations];
 
+        if (frameCounter % 30 == 0) {
+            MRZLog(@"OCR frame #%lu: %lu observations -> %lu lines: %@",
+                   (unsigned long)frameCounter, (unsigned long)observations.count, (unsigned long)lines.count, lines);
+        }
+
         [self handleParsedLines:lines isManual:isManual];
     }];
 
@@ -308,7 +371,11 @@
     request.recognitionLanguages = @[@"en-US"];
 
     VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCVPixelBuffer:pixelBuffer orientation:kCGImagePropertyOrientationUp options:@{}];
-    [handler performRequests:@[request] error:nil];
+    NSError *performError = nil;
+    [handler performRequests:@[request] error:&performError];
+    if (performError) {
+        MRZLog(@"performRequests ERROR: %@", performError.localizedDescription);
+    }
 }
 
 // MARK: - Gom cụm các đoạn văn bản cùng hàng ngang (Y-clustering)
