@@ -324,6 +324,12 @@
             }
 
             NSUInteger totalLen = [self parseDG2Length:plainHdr];
+            if (totalLen == 0) {
+                [session invalidateSessionWithErrorMessage:@"Không thể parse kích thước DG2. Format header không hợp lệ."];
+                return;
+            }
+            
+            NSLog(@"[DG2] Tổng kích thước cần đọc: %lu bytes", (unsigned long)totalLen);
             [self readRemainingDG2WithTag:tag session:session totalLength:totalLen accumulated:[plainHdr mutableCopy]];
         }];
     }];
@@ -384,12 +390,20 @@
 
 - (NSUInteger)parseDG2Length:(NSData *)header {
     const uint8_t *bytes = (const uint8_t *)header.bytes;
-    if (header.length >= 3 && bytes[2] == 0x82 && header.length >= 5) {
-        return (((NSUInteger)bytes[3]) << 8 | bytes[4]) + 5;
-    } else if (header.length >= 3 && bytes[2] == 0x81 && header.length >= 4) {
+    
+    // Case 1: Header có byte 0x81 (1 byte length: totalLen = bytes[3] + 4)
+    if (header.length >= 3 && bytes[2] == 0x81 && header.length >= 4) {
         return (NSUInteger)bytes[3] + 4;
     }
-    return 14000; // Dự phòng độ dài ảnh CCCD trung bình
+    
+    // Case 2: Header có byte 0x82 (2 bytes length: totalLen = (bytes[3]<<8 | bytes[4]) + 5)
+    if (header.length >= 3 && bytes[2] == 0x82 && header.length >= 5) {
+        return (((NSUInteger)bytes[3]) << 8 | bytes[4]) + 5;
+    }
+    
+    // Case 3: Header format không hỗ trợ - trả về 0 để caller xử lý lỗi
+    NSLog(@"[DG2] Không thể parse độ dài từ header DG2. Hex: %@", header);
+    return 0;
 }
 
 @end
