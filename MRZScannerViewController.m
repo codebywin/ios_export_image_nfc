@@ -18,8 +18,8 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor blackColor];
-    [self setupCamera];
     [self setupUI];
+    [self checkCameraPermissionAndSetup];
 }
 
 - (void)viewDidLayoutSubviews {
@@ -27,13 +27,45 @@
     self.previewLayer.frame = self.view.bounds;
 }
 
+- (void)checkCameraPermissionAndSetup {
+    AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+    if (status == AVAuthorizationStatusAuthorized) {
+        [self setupCamera];
+    } else if (status == AVAuthorizationStatusNotDetermined) {
+        [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (granted) {
+                    [self setupCamera];
+                } else {
+                    [self showPermissionAlert];
+                }
+            });
+        }];
+    } else {
+        [self showPermissionAlert];
+    }
+}
+
+- (void)showPermissionAlert {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa cấp quyền Camera"
+                                                                   message:@"Vui lòng cho phép quyền truy cập Camera trong Cài đặt để quét mặt sau CCCD."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Đóng" style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull action) {
+        [self handleClose];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)setupCamera {
     self.captureSession = [[AVCaptureSession alloc] init];
     self.captureSession.sessionPreset = AVCaptureSessionPreset1920x1080;
 
-    AVCaptureDevice *camera = [AVCaptureDevice defaultDeviceWithDeviceType:AVCaptureDeviceTypeBuiltInWideAngleCamera
-                                                                 mediaType:AVMediaTypeVideo
-                                                                  position:AVCaptureDevicePositionBack];
+    AVCaptureDevice *camera = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+    if (!camera) {
+        camera = [AVCaptureDevice defaultDeviceWithDeviceType:AVCaptureDeviceTypeBuiltInWideAngleCamera
+                                                    mediaType:AVMediaTypeVideo
+                                                     position:AVCaptureDevicePositionBack];
+    }
     if (!camera) return;
 
     NSError *error = nil;
@@ -51,7 +83,7 @@
 
     self.previewLayer = [AVCaptureVideoPreviewLayer layerWithSession:self.captureSession];
     self.previewLayer.videoGravity = AVLayerVideoGravityResizeAspectFill;
-    [self.view.layer addSublayer:self.previewLayer];
+    [self.view.layer insertSublayer:self.previewLayer atIndex:0];
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         [self.captureSession startRunning];

@@ -22,10 +22,14 @@
     <string>1</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>NSCameraUsageDescription</key>
+    <string>Ứng dụng cần quyền Camera để quét mã vạch MRZ ở mặt sau thẻ CCCD.</string>
     <key>NFCReaderUsageDescription</key>
     <string>Ứng dụng cần quyền NFC để đọc chip CCCD và xuất ảnh chân dung.</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
     <string>Cần quyền thêm ảnh vào Album để xuất ảnh chân dung CCCD ra file JPG.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Cần quyền truy cập thư viện ảnh để lưu ảnh chân dung CCCD.</string>
     <key>com.apple.developer.nfc.readersession.iso7816.select-identifiers</key>
     <array>
         <string>A0000002471001</string>
