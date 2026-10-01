@@ -5,7 +5,7 @@
 #import "DG2Parser.h"
 #import <Photos/Photos.h>
 
-@interface MainViewController () <CCCDReaderManagerDelegate, MRZScannerDelegate>
+@interface MainViewController () <CCCDReaderManagerDelegate, MRZScannerDelegate, UITextFieldDelegate>
 
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UIView *contentView;
@@ -68,11 +68,56 @@
     [self setupUI];
     [self setupActions];
     [self updateAuthMode];
+
+    // Chạm bất kỳ đâu ra ngoài để ẩn bàn phím
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissKeyboard)];
+    tap.cancelsTouchesInView = NO;
+    [self.view addGestureRecognizer:tap];
+
+    // Lắng nghe sự kiện bàn phím để cuộn UIScrollView
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)keyboardWillShow:(NSNotification *)notification {
+    NSDictionary *info = [notification userInfo];
+    CGSize kbSize = [[info objectForKey:UIKeyboardFrameEndUserInfoKey] CGRectValue].size;
+    UIEdgeInsets insets = UIEdgeInsetsMake(0.0, 0.0, kbSize.height + 20.0, 0.0);
+    self.scrollView.contentInset = insets;
+    self.scrollView.scrollIndicatorInsets = insets;
+}
+
+- (void)keyboardWillHide:(NSNotification *)notification {
+    self.scrollView.contentInset = UIEdgeInsetsZero;
+    self.scrollView.scrollIndicatorInsets = UIEdgeInsetsZero;
+}
+
+- (void)dismissKeyboard {
+    [self.view endEditing:YES];
+}
+
+- (void)addDoneButtonToTextField:(UITextField *)textField {
+    UIToolbar *toolbar = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, [UIScreen mainScreen].bounds.size.width, 44)];
+    UIBarButtonItem *flex = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+    UIBarButtonItem *done = [[UIBarButtonItem alloc] initWithTitle:@"✕ Xong (Ẩn bàn phím)" style:UIBarButtonItemStyleDone target:self action:@selector(dismissKeyboard)];
+    toolbar.items = @[flex, done];
+    textField.inputAccessoryView = toolbar;
+    textField.delegate = self;
+}
+
+- (BOOL)textFieldShouldReturn:(UITextField *)textField {
+    [textField resignFirstResponder];
+    return YES;
 }
 
 - (void)setupUI {
     self.scrollView = [[UIScrollView alloc] init];
     self.scrollView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.scrollView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     [self.view addSubview:self.scrollView];
 
     self.contentView = [[UIView alloc] init];
@@ -160,6 +205,7 @@
     self.canTextField.keyboardType = UIKeyboardTypeNumberPad;
     self.canTextField.textAlignment = NSTextAlignmentCenter;
     self.canTextField.font = [UIFont systemFontOfSize:15];
+    [self addDoneButtonToTextField:self.canTextField];
     [self.canContainer addSubview:self.canTextField];
 
     // 3. Manual MRZ View
@@ -171,16 +217,19 @@
     self.docNumberTextField.placeholder = @"Số CCCD (12 số)";
     self.docNumberTextField.borderStyle = UITextBorderStyleRoundedRect;
     self.docNumberTextField.keyboardType = UIKeyboardTypeNumberPad;
+    [self addDoneButtonToTextField:self.docNumberTextField];
 
     self.dobTextField = [[UITextField alloc] init];
     self.dobTextField.placeholder = @"Ngày sinh (YYMMDD ví dụ: 980512)";
     self.dobTextField.borderStyle = UITextBorderStyleRoundedRect;
     self.dobTextField.keyboardType = UIKeyboardTypeNumberPad;
+    [self addDoneButtonToTextField:self.dobTextField];
 
     self.doeTextField = [[UITextField alloc] init];
     self.doeTextField.placeholder = @"Ngày hết hạn (YYMMDD ví dụ: 380512)";
     self.doeTextField.borderStyle = UITextBorderStyleRoundedRect;
     self.doeTextField.keyboardType = UIKeyboardTypeNumberPad;
+    [self addDoneButtonToTextField:self.doeTextField];
 
     UIStackView *mrzStack = [[UIStackView alloc] initWithArrangedSubviews:@[self.docNumberTextField, self.dobTextField, self.doeTextField]];
     mrzStack.translatesAutoresizingMaskIntoConstraints = NO;
@@ -205,7 +254,7 @@
 
     self.statusLabel = [[UILabel alloc] init];
     self.statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.statusLabel.text = @"Bước 1: Quét mặt sau CCCD (hoặc nhập CAN)\nBước 2: Bấm nút trên và áp sát lưng iPhone vào chip";
+    self.statusLabel.text = @"Bước 1: Quét mặt sau (hoặc nhập CAN/MRZ)\nBước 2: Bấm nút trên và áp sát lưng iPhone vào chip";
     self.statusLabel.textColor = [UIColor secondaryLabelColor];
     self.statusLabel.font = [UIFont systemFontOfSize:13];
     self.statusLabel.textAlignment = NSTextAlignmentCenter;
@@ -342,6 +391,7 @@
 
 - (void)handleAuthSegmentChange {
     [self updateAuthMode];
+    [self dismissKeyboard];
 }
 
 - (void)updateAuthMode {
@@ -351,6 +401,7 @@
 }
 
 - (void)handleOpenMRZCamera {
+    [self dismissKeyboard];
     MRZScannerViewController *scanner = [[MRZScannerViewController alloc] init];
     scanner.delegate = self;
     [self presentViewController:scanner animated:YES completion:nil];
@@ -374,6 +425,7 @@
 
 // MARK: - Handle NFC Scan
 - (void)handleStartNFC {
+    [self dismissKeyboard];
     NSData *seed = nil;
 
     switch (self.segmentAuth.selectedSegmentIndex) {
@@ -396,9 +448,9 @@
             break;
         }
         case 2: {
-            NSString *doc = self.docNumberTextField.text;
-            NSString *dob = self.dobTextField.text;
-            NSString *doe = self.doeTextField.text;
+            NSString *doc = [self.docNumberTextField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            NSString *dob = [self.dobTextField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            NSString *doe = [self.doeTextField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
             if (doc.length == 0 || dob.length == 0 || doe.length == 0) {
                 [self showAlertWithTitle:@"Thiếu thông tin" message:@"Vui lòng nhập đủ 3 trường: Số CCCD, Ngày sinh và Ngày hết hạn."];
                 return;

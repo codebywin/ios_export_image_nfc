@@ -11,9 +11,11 @@
 @property (nonatomic, strong) UIView *overlayGuideView;
 @property (nonatomic, strong) UILabel *instructionLabel;
 @property (nonatomic, strong) UILabel *liveDetectLabel;
+@property (nonatomic, strong) UIButton *captureManualButton;
 @property (nonatomic, strong) UIButton *closeButton;
 @property (nonatomic, strong) UIButton *torchButton;
 @property (nonatomic, assign) BOOL isTorchOn;
+@property (nonatomic, assign) CVPixelBufferRef latestPixelBuffer;
 
 @end
 
@@ -24,6 +26,13 @@
     self.view.backgroundColor = [UIColor blackColor];
     [self setupUI];
     [self checkCameraPermissionAndSetup];
+}
+
+- (void)dealloc {
+    if (_latestPixelBuffer) {
+        CVPixelBufferRelease(_latestPixelBuffer);
+        _latestPixelBuffer = NULL;
+    }
 }
 
 - (void)viewDidLayoutSubviews {
@@ -72,7 +81,7 @@
     }
     if (!camera) return;
 
-    // Bật Auto Focus liên tục
+    // Tự động lấy nét Macro liên tục
     NSError *lockErr = nil;
     if ([camera lockForConfiguration:&lockErr]) {
         if ([camera isFocusModeSupported:AVCaptureFocusModeContinuousAutoFocus]) {
@@ -93,12 +102,6 @@
     [self.videoOutput setSampleBufferDelegate:self queue:queue];
     if ([self.captureSession canAddOutput:self.videoOutput]) {
         [self.captureSession addOutput:self.videoOutput];
-    }
-
-    // Thiết lập Orientation chuẩn Portrait
-    AVCaptureConnection *conn = [self.videoOutput connectionWithMediaType:AVMediaTypeVideo];
-    if (conn.isVideoOrientationSupported) {
-        conn.videoOrientation = AVCaptureVideoOrientationPortrait;
     }
 
     self.previewLayer = [AVCaptureVideoPreviewLayer layerWithSession:self.captureSession];
@@ -142,6 +145,17 @@
     self.liveDetectLabel.clipsToBounds = YES;
     [self.view addSubview:self.liveDetectLabel];
 
+    // Nút Bấm Chụp Nhận Diện Ngay
+    self.captureManualButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.captureManualButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.captureManualButton setTitle:@"📸 Bấm Để Nhận Diện Ngay" forState:UIControlStateNormal];
+    [self.captureManualButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.captureManualButton.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
+    self.captureManualButton.backgroundColor = [UIColor systemBlueColor];
+    self.captureManualButton.layer.cornerRadius = 12.0;
+    [self.captureManualButton addTarget:self action:@selector(handleManualCapture) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.captureManualButton];
+
     self.closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.closeButton.translatesAutoresizingMaskIntoConstraints = NO;
     [self.closeButton setTitle:@"✕ Đóng" forState:UIControlStateNormal];
@@ -164,19 +178,24 @@
 
     [NSLayoutConstraint activateConstraints:@[
         [self.overlayGuideView.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [self.overlayGuideView.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+        [self.overlayGuideView.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor constant:-30],
         [self.overlayGuideView.widthAnchor constraintEqualToAnchor:self.view.widthAnchor multiplier:0.90],
         [self.overlayGuideView.heightAnchor constraintEqualToConstant:150],
 
-        [self.instructionLabel.topAnchor constraintEqualToAnchor:self.overlayGuideView.bottomAnchor constant:16],
+        [self.instructionLabel.topAnchor constraintEqualToAnchor:self.overlayGuideView.bottomAnchor constant:14],
         [self.instructionLabel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:24],
         [self.instructionLabel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-24],
-        [self.instructionLabel.heightAnchor constraintGreaterThanOrEqualToConstant:40],
+        [self.instructionLabel.heightAnchor constraintGreaterThanOrEqualToConstant:38],
 
-        [self.liveDetectLabel.topAnchor constraintEqualToAnchor:self.instructionLabel.bottomAnchor constant:8],
+        [self.liveDetectLabel.topAnchor constraintEqualToAnchor:self.instructionLabel.bottomAnchor constant:6],
         [self.liveDetectLabel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:24],
         [self.liveDetectLabel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-24],
-        [self.liveDetectLabel.heightAnchor constraintEqualToConstant:26],
+        [self.liveDetectLabel.heightAnchor constraintEqualToConstant:24],
+
+        [self.captureManualButton.topAnchor constraintEqualToAnchor:self.liveDetectLabel.bottomAnchor constant:16],
+        [self.captureManualButton.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:30],
+        [self.captureManualButton.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-30],
+        [self.captureManualButton.heightAnchor constraintEqualToConstant:46],
 
         [self.closeButton.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:16],
         [self.closeButton.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-20],
@@ -215,12 +234,46 @@
 // MARK: - Sample Buffer Delegate
 
 - (void)captureOutput:(AVCaptureOutput *)output didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer fromConnection:(AVCaptureConnection *)connection {
-    if (self.isProcessing) return;
     CVImageBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
     if (!pixelBuffer) return;
 
+    @synchronized(self) {
+        if (self.latestPixelBuffer) {
+            CVPixelBufferRelease(self.latestPixelBuffer);
+        }
+        self.latestPixelBuffer = CVPixelBufferRetain(pixelBuffer);
+    }
+
+    if (self.isProcessing) return;
     self.isProcessing = YES;
 
+    // Luân phiên kiểm tra cả 2 hướng: Right (Landscape buffer của iPhone khi cầm dọc) và Up
+    static int frameCounter = 0;
+    frameCounter++;
+    CGImagePropertyOrientation orientation = (frameCounter % 2 == 0) ? kCGImagePropertyOrientationRight : kCGImagePropertyOrientationUp;
+
+    [self processPixelBuffer:pixelBuffer orientation:orientation isManual:NO];
+}
+
+- (void)handleManualCapture {
+    CVPixelBufferRef bufferToProcess = NULL;
+    @synchronized(self) {
+        if (self.latestPixelBuffer) {
+            bufferToProcess = CVPixelBufferRetain(self.latestPixelBuffer);
+        }
+    }
+
+    if (!bufferToProcess) return;
+
+    self.isProcessing = YES;
+    self.liveDetectLabel.text = @"Đang phân tích chi tiết...";
+
+    // Thử hướng Right trước
+    [self processPixelBuffer:bufferToProcess orientation:kCGImagePropertyOrientationRight isManual:YES];
+    CVPixelBufferRelease(bufferToProcess);
+}
+
+- (void)processPixelBuffer:(CVPixelBufferRef)pixelBuffer orientation:(CGImagePropertyOrientation)orientation isManual:(BOOL)isManual {
     VNRecognizeTextRequest *request = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest * _Nonnull req, NSError * _Nullable error) {
         self.isProcessing = NO;
         if (error || !req.results) return;
@@ -229,9 +282,8 @@
         for (VNRecognizedTextObservation *obs in req.results) {
             VNRecognizedText *top = [[obs topCandidates:1] firstObject];
             if (top) {
-                // Làm sạch chuỗi: bỏ khoảng trắng, chuyển chữ hoa, đổi dấu < thành chữ
                 NSString *clean = [[top.string stringByReplacingOccurrencesOfString:@" " withString:@""] uppercaseString];
-                if (clean.length > 5) {
+                if (clean.length >= 4) {
                     [lines addObject:clean];
                 }
             }
@@ -239,32 +291,40 @@
 
         if (lines.count > 0) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                self.liveDetectLabel.text = [NSString stringWithFormat:@"Nhận diện: %@", [lines.firstObject substringToIndex:MIN(25, lines.firstObject.length)]];
+                self.liveDetectLabel.text = [NSString stringWithFormat:@"Đọc: %@", [lines.firstObject substringToIndex:MIN(24, lines.firstObject.length)]];
             });
         }
 
-        [self parseMRZFromLines:lines];
+        BOOL success = [self parseMRZFromLines:lines];
+        if (!success && isManual) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSString *seen = lines.count > 0 ? [lines componentsJoinedByString:@"\n"] : @"(Không phát hiện văn bản)";
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa nhận diện được mã MRZ"
+                                                                               message:[NSString stringWithFormat:@"Camera nhìn thấy:\n%@\n\nHãy căn chỉnh sát 3 dòng chữ ở góc dưới thẻ hoặc nhập CAN.", seen]
+                                                                        preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"Đã hiểu" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:alert animated:YES completion:nil];
+            });
+        }
     }];
 
     request.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
     request.usesLanguageCorrection = NO;
+    request.recognitionLanguages = @[@"en-US"];
 
-    // Pixel buffer đã được định hướng Portrait từ connection nên dùng Up
-    VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCVPixelBuffer:pixelBuffer orientation:kCGImagePropertyOrientationUp options:@{}];
+    VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCVPixelBuffer:pixelBuffer orientation:orientation options:@{}];
     [handler performRequests:@[request] error:nil];
 }
 
 // MARK: - Robust MRZ Parser
 
-- (void)parseMRZFromLines:(NSArray<NSString *> *)lines {
+- (BOOL)parseMRZFromLines:(NSArray<NSString *> *)lines {
     NSString *foundDocNumber = nil;
     NSString *foundDOB = nil;
     NSString *foundDOE = nil;
 
     // 1. Tìm Số CCCD:
-    // Dòng 1 thường có dạng: IDVNM0012000000002<<<<<<<<<<<< hoặc chứa 12 số CCCD
     for (NSString *line in lines) {
-        // Tìm 12 chữ số liên tiếp
         NSRegularExpression *docRegex = [NSRegularExpression regularExpressionWithPattern:@"(\\d{12})" options:0 error:nil];
         NSTextCheckingResult *match = [docRegex firstMatchInString:line options:0 range:NSMakeRange(0, line.length)];
         if (match) {
@@ -272,7 +332,6 @@
             break;
         }
 
-        // Nếu bắt đầu bằng VNM hoặc ID và có ít nhất 9 số
         if ([line containsString:@"VNM"] || [line containsString:@"ID"] || [line containsString:@"I<"]) {
             NSMutableString *digits = [NSMutableString string];
             for (NSUInteger i = 0; i < line.length; i++) {
@@ -289,8 +348,6 @@
     }
 
     // 2. Tìm Ngày sinh & Ngày hết hạn từ Dòng 2:
-    // Dạng chuẩn ICAO TD1: [DOB: 6 số][Check: 1][Giới tính: M/F/<][DOE: 6 số][Check: 1]...
-    // Ví dụ: 9805125M3805126VNM...
     NSRegularExpression *dateRegex = [NSRegularExpression regularExpressionWithPattern:@"(\\d{6})[0-9A-Z<]{1,3}(\\d{6})" options:0 error:nil];
 
     for (NSString *line in lines) {
@@ -299,7 +356,6 @@
             NSString *rawDOB = [line substringWithRange:[match rangeAtIndex:1]];
             NSString *rawDOE = [line substringWithRange:[match rangeAtIndex:2]];
 
-            // Kiểm tra tính hợp lệ sơ bộ của ngày tháng (tháng 01-12, ngày 01-31)
             if ([self isValidYYMMDD:rawDOB] && [self isValidYYMMDD:rawDOE]) {
                 foundDOB = rawDOB;
                 foundDOE = rawDOE;
@@ -307,7 +363,6 @@
             }
         }
 
-        // Cách 2: Trích xuất toàn bộ số từ dòng chứa chữ M/F và kiểm tra
         if ([line containsString:@"M"] || [line containsString:@"F"] || [line containsString:@"VNM"]) {
             NSMutableString *digits = [NSMutableString string];
             for (NSUInteger i = 0; i < line.length; i++) {
@@ -326,7 +381,7 @@
         }
     }
 
-    // Nếu đã tìm thấy đầy đủ 3 trường hợp lệ:
+    // Nếu đã tìm thấy đầy đủ:
     if (foundDocNumber.length >= 9 && foundDOB.length == 6 && foundDOE.length == 6) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [self.captureSession stopRunning];
@@ -338,7 +393,9 @@
             }
             [self dismissViewControllerAnimated:YES completion:nil];
         });
+        return YES;
     }
+    return NO;
 }
 
 - (BOOL)isValidYYMMDD:(NSString *)dateStr {
